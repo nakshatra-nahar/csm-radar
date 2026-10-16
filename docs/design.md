@@ -506,3 +506,59 @@ This will be measured on a 10x generated world and written into the README:
 - single-worker throughput;
 - LLM spend during a correlated shock;
 - Postgres plan quality as the app role.
+
+## Appendix A: schema contract (columns every task relies on)
+
+Later tasks may add columns or tables only through new migration files (`005_*.sql`, ...); applied migrations are never edited. Every tenant table follows the RLS template in §4.3. "PK" means `PRIMARY KEY (tenant_id, id)` unless stated.
+
+001_core
+- `tenants(id uuid PK, slug text UNIQUE, name, timezone, currency, internal_domain, config jsonb, config_version int DEFAULT 1, created_at)`; no RLS, no customer data.
+- `users(tenant_id, id uuid DEFAULT gen_random_uuid(), email, name, role CHECK (csm|manager|admin), manager_id uuid NULL, sf_user_id text NULL, active bool DEFAULT true)`; PK; UNIQUE(tenant_id, email); FK (tenant_id, manager_id) → users.
+- `raw_records(tenant_id, id bigint IDENTITY, source, source_record_id, payload jsonb, payload_hash text, channel text, headers jsonb, meta jsonb, occurred_at timestamptz NULL, available_at timestamptz NOT NULL, ingested_at timestamptz DEFAULT now())`; PK; UNIQUE(tenant_id, source, source_record_id).
+- `events(tenant_id, id bigint IDENTITY, raw_record_id bigint, source, type, entity_id, account_ref text NULL, occurred_at, available_at, ingested_at DEFAULT now(), version_key text NOT NULL, status text, priority text, amount_minor bigint, quantity int, attrs jsonb NOT NULL DEFAULT '{}')`; PK; FK (tenant_id, raw_record_id) → raw_records.
+- `identity_links(tenant_id, id bigint IDENTITY, source, account_ref, account_id uuid, method, available_at, recorded_at DEFAULT now())`; PK; FK (tenant_id, account_id) → accounts. Resolution at T: latest row per `account_ref` with `available_at <= T`.
+- `quarantine(tenant_id, id bigint IDENTITY, raw_record_id bigint NULL, source, account_ref text NULL, reason, details jsonb, available_at, resolved_at NULL, resolved_link_id bigint NULL, created_at)`; PK.
+- `accounts(tenant_id, id uuid DEFAULT gen_random_uuid(), sf_account_id text, name, domain, owner_user_id uuid NULL, owner_sf_user_id text NULL, segment, is_test bool DEFAULT false, merged_into uuid NULL, source_modstamp timestamptz, created_at, updated_at)`; PK; UNIQUE(tenant_id, sf_account_id); FK owner → users.
+- `contacts(tenant_id, id uuid, account_id uuid NULL, sf_contact_id text, email, first_name, last_name, title, is_champion bool, opted_out bool, departed bool DEFAULT false, hard_bounced_at timestamptz NULL, source_modstamp timestamptz)`; PK; UNIQUE(tenant_id, sf_contact_id); FK account.
+- `source_status(tenant_id, source, feed_offset bigint DEFAULT 0, last_deliver_at, last_ingest_at, counters jsonb DEFAULT '{}')`; PRIMARY KEY (tenant_id, source).
+
+002_scoring
+- `models(tenant_id, id uuid, version int, status CHECK (candidate|active|retired|rejected), algorithm DEFAULT 'logreg', artifact jsonb, manifest jsonb, label_version, train_window jsonb, metrics jsonb, model_card_md text, trained_at, promoted_at NULL, promoted_by NULL)`; PK; UNIQUE(tenant_id, version); UNIQUE(tenant_id) WHERE status = 'active'.
+- `score_runs(tenant_id, id uuid, model_id uuid NULL, trigger CHECK (sweep|backfill|event|manual), actionable bool, as_of, watermarks jsonb, crosswalk_watermark timestamptz, config_version int, manifest jsonb, code_version text, status CHECK (running|done|failed), started_at, finished_at NULL, n_scored int)`; PK; FK model.
+- `account_scores(tenant_id, run_id uuid, account_id uuid, as_of, eligible bool, p double NULL, logit double NULL, lift double NULL, rules_score double NULL, band text, rank_in_book int NULL, owner_user_id uuid NULL, arr_minor bigint NULL, expected_arr_at_risk_minor bigint NULL, features jsonb, contributions jsonb, context jsonb, coverage jsonb)`; PRIMARY KEY (tenant_id, run_id, account_id); FKs run, account.
+- `VIEW latest_scores WITH (security_invoker = true)`: rows of the latest `done` + `actionable` run per tenant.
+
+003_agent
+- `jobs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, payload jsonb, dedupe_key NULL, lane smallint DEFAULT 0, run_at DEFAULT now(), status CHECK (queued|running|done|dead) DEFAULT 'queued', attempts int DEFAULT 0, max_attempts int DEFAULT 5, lease_expires_at NULL, last_error NULL, created_at, finished_at NULL)`; UNIQUE (tenant_id, dedupe_key) WHERE status = 'queued'; index (lane, run_at, id) WHERE status = 'queued'. Policies: `radar_web` sees `tenant_id = current tenant`; `radar_worker` sees all.
+- `schedule_runs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, period_key, created_at)`; UNIQUE NULLS NOT DISTINCT (tenant_id, kind, period_key); worker-only.
+- `cases(tenant_id, id uuid, account_id, kind, status CHECK (open|held|done|dismissed|snoozed|auto_closed), play, opened_at, opened_by text, owner_user_id NULL, sla_due_at NULL, escalated_at NULL, evidence_event_ids bigint[] DEFAULT '{}', outcome NULL, outcome_reason NULL, closed_at NULL, closed_by uuid NULL)`; PK; UNIQUE (tenant_id, account_id, kind) WHERE status IN ('open','held').
+- `suppressions(tenant_id, id uuid, account_id, created_by uuid, reason, p_at_dismiss double NULL, created_at, lifted_at NULL, lifted_reason NULL)`; PK.
+- `worklists(tenant_id, id uuid, user_id, week_start date, run_id uuid, frozen_at, viewed_at NULL)`; PK; UNIQUE(tenant_id, user_id, week_start).
+- `worklist_items(tenant_id, id uuid, worklist_id, account_id, position int, kind CHECK (must_act|check_in|model), reason text, p double NULL, expected_arr_at_risk_minor bigint NULL, case_id uuid NULL, added_at, new_since_monday bool DEFAULT false)`; PK; UNIQUE(tenant_id, worklist_id, account_id).
+- `briefs(tenant_id, id uuid, case_id, evidence_hash, prompt_version, status CHECK (pending|ready|failed), generator NULL, evidence jsonb, output jsonb NULL, validation jsonb NULL, created_at, updated_at)`; PK; UNIQUE(tenant_id, case_id, evidence_hash, prompt_version).
+- `llm_calls(tenant_id, id bigint IDENTITY, brief_id uuid, attempt int, model, request_id NULL, response_id NULL, stop_reason NULL, usage jsonb, cost_usd numeric(12,6), latency_ms int, ok bool, error NULL, created_at)`; PK.
+- `outbox(tenant_id, id uuid, case_id NULL, brief_id NULL, kind CHECK (customer_email|csm_digest|manager_digest), to_contact_id NULL, to_user_id NULL, subject, body, status CHECK (draft|approved|sent|cancelled), approved_by NULL, approved_at NULL, sent_at NULL, transport DEFAULT 'dry_run', created_at)`; PK.
+- `incidents(tenant_id, id uuid, kind CHECK (circuit_breaker|source_stale|manifest_mismatch), source NULL, details jsonb, opened_at, acknowledged_by NULL, acknowledged_at NULL, closed_at NULL)`; PK.
+- `audit_log(tenant_id, id bigint IDENTITY, at DEFAULT now(), actor text ('agent'|'system'|'user:<uuid>'), action, entity_type, entity_id text, before jsonb NULL, after jsonb NULL, reason NULL)`; PK. Written by AFTER INSERT/UPDATE triggers on cases, outbox, suppressions, models, incidents (actor from `current_setting('app.actor', true)`), plus explicit inserts.
+
+## Appendix B: canonical event contract (ingestion produces, features consume)
+
+`account_ref` prefixes: `sf:`, `sf_opp:`, `stripe:`, `zd_org:`, `email:`, `ws:`. Identity methods: `sf_id`, `merge`, `sf_opportunity`, `stripe_metadata`, `zendesk_external_id`, `product_metadata`, `contact_email`, `domain`. Each tenant has an `internal_domain` (hearthline.io, tallyworks.co.uk, kitewire.dev) used to tell CSM addresses from customer addresses.
+
+| type | entity_id | account_ref | occurred_at; version_key | hot columns | attrs |
+|---|---|---|---|---|---|
+| crm.account | `sf_account:<Id>` | `sf:<Id>` | SystemModstamp; its ISO string | status=Type | name, website, domain, owner_sf_id, csm_sf_id, segment, is_test, is_deleted, master_record_id, arr_minor (ARR__c as minor units), renewal_date (YYYY-MM-DD) |
+| crm.contact | `sf_contact:<Id>` | `sf:<AccountId>` | SystemModstamp | | email (lowercase), first_name, last_name, title, champion, opted_out, is_deleted |
+| crm.opportunity | `sf_opp:<Id>` | `sf:<AccountId>` | SystemModstamp | status=StageName, amount_minor | opp_id, type, close_date, is_closed, is_won, loss_reason |
+| crm.opportunity_history | `sf_opp_hist:<Id>` | `sf_opp:<OpportunityId>` | CreatedDate | status=StageName | opp_id |
+| crm.user | `sf_user:<Id>` | NULL | SystemModstamp | | email, name, manager_sf_id |
+| billing.customer | `stripe_cus:<id>` | `stripe:<id>` | event created; `<created:010d>:<evt id>` | | email, email_domain, name, sf_account_id_raw, currency, api_version |
+| billing.subscription | `stripe_sub:<id>` | `stripe:<customer>` | event created; `<created:010d>:<state rank>:<evt id>` (rank: canceled > past_due > active, so terminal states win same-second ties) | status, quantity (sum of seat item quantities) | items[{id, price_id, unit_amount, currency, interval, interval_count, quantity}], cancel_at_period_end, cancel_at, canceled_at, ended_at, cancellation_reason, current_period_end, event_type, api_version |
+| billing.invoice | `stripe_inv:<id>` | `stripe:<customer>` | event created | status, amount_minor (amount_due) | event_type, attempt_count, next_payment_attempt, paid, subscription_id, currency |
+| support.organization | `zd_org:<id>` | `zd_org:<id>` | updated_at | | name, external_id_raw, domain_names[] |
+| support.ticket | `zd_ticket:<id>` | `zd_org:<organization_id>` or NULL | updated_at; `<updated_at>:<generated_timestamp>` | status, priority | ticket_id, subject (<= 200 chars), description_excerpt (<= 500), tags[], type, via_channel, csat, created_at, problem_id |
+| email.message | `gmail:<lowercased Message-ID>` | `email:<customer address>` (inbound: From; outbound: first non-internal To; DSN: failed recipient) | internalDate | | direction (inbound/outbound), mailbox, from, to[], cc[], is_auto_reply, is_dsn, dsn_status, failed_recipient, thread_id |
+| product.usage | `usage:<workspace>:<period_end date>` | `ws:<workspace>` | period_end (end of period, UTC); `<version:04d>` | | schema, period_start, period_end, version, computed_at, metrics{active_users, ...}, sf_account_id_raw |
+| product.event | `product_event:<messageId>` | `ws:<groupId>` | corrected timestamp | | event (integration_sync_error, integration_disconnected, integration_reconnected, workspace_went_live, user_suspended, sales_agent_paused), properties, received_at |
+
+`source_status.counters` keys: received, accepted, duplicates, conflicts, twins, quarantined{reason: n}, restatements, schema_versions{name: n}, auto_replies, dsn, future_timestamps.
