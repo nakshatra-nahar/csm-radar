@@ -68,6 +68,8 @@ def test_feed_files_sorted_and_envelopes_valid(small_world):
             assert isinstance(x["headers"], dict) and isinstance(x["meta"], dict)
             if src == "gmail":
                 assert x["meta"]["mailbox"].endswith("@" + TENANTS[slug].internal_domain)
+            if src == "zendesk" and "requester_id" in x["body"]:  # a ticket row
+                assert "problem_id" in x["body"]  # Appendix B support.ticket attr
         for raw in small_world["raw"][slug, src]:  # one compact object per line
             assert raw == json.dumps(json.loads(raw), separators=(",", ":"), sort_keys=True)
     for slug, row in small_world["summary"]["tenants"].items():

@@ -45,6 +45,7 @@ def emit(world: World, rng: np.random.Generator) -> tuple[list[dict], set[tuple[
                 "type": v.type, "requester_id": requester, "organization_id": org,
                 "tags": list(v.tags),  # 2a shares one list across a ticket's versions
                 "via": {"channel": channel}, "satisfaction_rating": {"score": v.csat},
+                "problem_id": None,  # Appendix B attr; 2a models no problem/incident links
             }, {"export": "tickets"}))
     share = PARAMS["feed"]["zendesk"]["org_external_id"]
     for org, (at, a) in orgs.items():
