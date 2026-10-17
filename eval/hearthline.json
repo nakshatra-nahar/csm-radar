@@ -1,0 +1,781 @@
+{
+ "tenant": "hearthline",
+ "k": 10,
+ "policies": {
+  "random": {
+   "recall_at_k_arr": 0.2570349611896713,
+   "precision_at_k": 0.08716939360928389,
+   "lift_at_k": 0.9938800946562795,
+   "roc_auc": 0.5,
+   "pr_auc": 0.08770614692653673,
+   "brier": NaN
+  },
+  "renewal_sort": {
+   "recall_at_k_arr": 0.1424745540682139,
+   "precision_at_k": 0.044921875,
+   "lift_at_k": 0.5121861645299145,
+   "roc_auc": 0.4419268030223933,
+   "pr_auc": 0.07173170519768313,
+   "brier": NaN
+  },
+  "arr_sort": {
+   "recall_at_k_arr": 0.4143475796303613,
+   "precision_at_k": 0.07578125,
+   "lift_at_k": 0.8640357905982905,
+   "roc_auc": 0.4627476529475982,
+   "pr_auc": 0.08389435694429735,
+   "brier": NaN
+  },
+  "rules": {
+   "recall_at_k_arr": 0.5379539050839485,
+   "precision_at_k": 0.142578125,
+   "lift_at_k": 1.6256343482905982,
+   "roc_auc": 0.6942089003442058,
+   "pr_auc": 0.18811558407028492,
+   "brier": NaN
+  },
+  "model": {
+   "recall_at_k_arr": 0.6198054578278331,
+   "precision_at_k": 0.182421875,
+   "lift_at_k": 2.0799212072649573,
+   "roc_auc": 0.7682519326945513,
+   "pr_auc": 0.29137624074716023,
+   "brier": 0.07114085120494947
+  },
+  "oracle": {
+   "recall_at_k_arr": 0.7881294876163006,
+   "precision_at_k": 0.2486328125,
+   "lift_at_k": 2.834839075854701,
+   "roc_auc": 0.8681483978553275,
+   "pr_auc": 0.4603293762493599,
+   "brier": 0.06051168657114071
+  },
+  "gbm": {
+   "recall_at_k_arr": 0.5335338839661985,
+   "precision_at_k": 0.170703125,
+   "lift_at_k": 1.9463074252136752,
+   "roc_auc": 0.6944959231401303,
+   "pr_auc": 0.20316539362279484,
+   "brier": 0.07924007385663757
+  }
+ },
+ "ci": {
+  "recall": {
+   "random": {
+    "diff": 0.2570349611896713,
+    "lo": 0.24852761931755019,
+    "hi": 0.2658373278587772
+   },
+   "renewal_sort": {
+    "diff": 0.1424745540682139,
+    "lo": 0.10134688501039064,
+    "hi": 0.1824586763016787
+   },
+   "arr_sort": {
+    "diff": 0.4143475796303613,
+    "lo": 0.3198910723070768,
+    "hi": 0.5074448718705998
+   },
+   "rules": {
+    "diff": 0.5379539050839485,
+    "lo": 0.4553600592224616,
+    "hi": 0.6117927753143781
+   },
+   "model": {
+    "diff": 0.6198054578278331,
+    "lo": 0.5414619162456975,
+    "hi": 0.6863655092093081
+   },
+   "oracle": {
+    "diff": 0.7881294876163006,
+    "lo": 0.7266000196714991,
+    "hi": 0.840815409620328
+   },
+   "gbm": {
+    "diff": 0.5335338839661985,
+    "lo": 0.4576864743569824,
+    "hi": 0.611955289557441
+   }
+  },
+  "model_minus_renewal_sort": {
+   "diff": 0.47733090375961923,
+   "lo": 0.38711474228585757,
+   "hi": 0.5615045994553278
+  },
+  "model_minus_rules": {
+   "diff": 0.08185155274388467,
+   "lo": 0.031914869367659374,
+   "hi": 0.13121762955552463
+  }
+ },
+ "reliability": {
+  "month": {
+   "rows": 7387,
+   "ece": 0.013556057867150681,
+   "bins": [
+    {
+     "mean_p": 0.018598216053181578,
+     "rate": 0.02029769959404601,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.029943963772816155,
+     "rate": 0.04330175913396482,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.03976688577664961,
+     "rate": 0.05962059620596206,
+     "rows": 738
+    },
+    {
+     "mean_p": 0.04904843212085613,
+     "rate": 0.04330175913396482,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.05785537325310454,
+     "rate": 0.04736129905277402,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.06936704629406829,
+     "rate": 0.05962059620596206,
+     "rows": 738
+    },
+    {
+     "mean_p": 0.0848718284318386,
+     "rate": 0.09472259810554803,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.09978350867107874,
+     "rate": 0.09349593495934959,
+     "rows": 738
+    },
+    {
+     "mean_p": 0.13343793237520152,
+     "rate": 0.12313937753721245,
+     "rows": 739
+    },
+    {
+     "mean_p": 0.274200080526984,
+     "rate": 0.2259810554803789,
+     "rows": 739
+    }
+   ]
+  },
+  "year": {
+   "rows": 12623,
+   "ece": 0.02423262076524486,
+   "bins": [
+    {
+     "mean_p": 0.018738510856626662,
+     "rate": 0.012668250197941409,
+     "rows": 1263
+    },
+    {
+     "mean_p": 0.030078070470027835,
+     "rate": 0.01664025356576862,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.03875537438193964,
+     "rate": 0.02456418383518225,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.04811452270836635,
+     "rate": 0.03724247226624406,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.05766528460551927,
+     "rate": 0.0395882818685669,
+     "rows": 1263
+    },
+    {
+     "mean_p": 0.07061048047305446,
+     "rate": 0.05071315372424723,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.0860838815102314,
+     "rate": 0.07290015847860538,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.10131638455453307,
+     "rate": 0.07448494453248812,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.13976899968299022,
+     "rate": 0.20998415213946117,
+     "rows": 1262
+    },
+    {
+     "mean_p": 0.32733099076875655,
+     "rate": 0.3768804433887569,
+     "rows": 1263
+    }
+   ]
+  }
+ },
+ "lead_time": {
+  "decisions": 190,
+  "flagged": 127,
+  "median_weeks": 12.262061838624339,
+  "share_6w": 0.5789473684210527
+ },
+ "hindsight_vs_pit": {
+  "pit_auc": 0.7682519326945513,
+  "hindsight_auc": 0.7690315965418677
+ },
+ "ablation": {
+  "product": {
+   "recall_at_k_arr": 0.5638555078521718,
+   "delta": -0.055949949975661384
+  },
+  "zendesk": {
+   "recall_at_k_arr": 0.5977456436771276,
+   "delta": -0.02205981415070557
+  },
+  "gmail": {
+   "recall_at_k_arr": 0.6074619239614945,
+   "delta": -0.012343533866338685
+  },
+  "billing": {
+   "recall_at_k_arr": 0.5397653577741196,
+   "delta": -0.08004010005371354
+  },
+  "crm": {
+   "recall_at_k_arr": 0.5908336474806394,
+   "delta": -0.02897181034719376
+  }
+ },
+ "outage_week": {
+  "outage_week": "2025-11-17 00:00:00+00:00",
+  "outage_max_new": 3,
+  "median_max_new": 3.0,
+  "by_week": {
+   "2025-11-10": 3,
+   "2025-11-17": 3,
+   "2025-11-24": 3,
+   "2025-12-01": 4,
+   "2025-12-08": 3,
+   "2025-12-15": 3,
+   "2025-12-22": 2,
+   "2025-12-29": 3,
+   "2026-01-05": 5,
+   "2026-01-12": 3,
+   "2026-01-19": 3,
+   "2026-01-26": 2,
+   "2026-02-02": 3,
+   "2026-02-09": 4,
+   "2026-02-16": 4,
+   "2026-02-23": 3,
+   "2026-03-02": 3,
+   "2026-03-09": 6,
+   "2026-03-16": 4,
+   "2026-03-23": 3,
+   "2026-03-30": 3,
+   "2026-04-06": 4,
+   "2026-04-13": 3,
+   "2026-04-20": 2,
+   "2026-04-27": 4,
+   "2026-05-04": 3,
+   "2026-05-11": 3,
+   "2026-05-18": 2,
+   "2026-05-25": 3,
+   "2026-06-01": 4,
+   "2026-06-08": 4
+  }
+ },
+ "coef": {
+  "usage_drop": 0.03183465788478249,
+  "seat_utilization": -0.47585469683961434,
+  "integration_broken": 0.15788055900094464,
+  "not_live_after_30d": 0.2588375928555473,
+  "open_urgent_tickets": 0.10533262032640835,
+  "support_friction_90d": 0.2306668356872964,
+  "days_since_customer_email": 0.2496731629917271,
+  "seat_change_180d": -0.3169697034264835,
+  "log_arr": -0.05101845657267278,
+  "tenure_years": 0.03480057630582654,
+  "term_end_within_60d": -0.29882858683475055,
+  "billing_month_to_month": 0.0,
+  "no_telemetry": 0.038486256376877574
+ },
+ "signs": [],
+ "difficulty": {
+  "max_single_auc": 0.7174004878278466,
+  "max_single_feature": "seat_utilization",
+  "full_model_auc": 0.7533296734408502,
+  "single_auc": {
+   "usage_drop": 0.5449972611820086,
+   "seat_utilization": 0.7174004878278466,
+   "integration_broken": 0.5299274617513003,
+   "not_live_after_30d": 0.6004481642344883,
+   "open_urgent_tickets": 0.5172403552746379,
+   "support_friction_90d": 0.5818552658279049,
+   "days_since_customer_email": 0.5974788316179163,
+   "seat_change_180d": 0.5455435904357065,
+   "log_arr": 0.5387398942825512,
+   "tenure_years": 0.5568704456793943,
+   "term_end_within_60d": 0.5763202088887787,
+   "billing_month_to_month": 0.5,
+   "no_telemetry": 0.5161596038152549
+  },
+  "oracle_auc": 0.8481854719242551
+ },
+ "counts": {
+  "origins": [
+   {
+    "origin": "2025-11-03 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-07-28 00:00:00+00:00",
+    "test_from": "2025-11-03 00:00:00+00:00",
+    "test_to": "2025-12-22 00:00:00+00:00",
+    "train_rows": 13563,
+    "train_decisions": 142,
+    "test_rows": 4490,
+    "test_decisions": 66
+   },
+   {
+    "origin": "2025-12-29 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-09-22 00:00:00+00:00",
+    "test_from": "2025-12-29 00:00:00+00:00",
+    "test_to": "2026-02-16 00:00:00+00:00",
+    "train_rows": 17632,
+    "train_decisions": 168,
+    "test_rows": 5100,
+    "test_decisions": 93
+   },
+   {
+    "origin": "2026-02-23 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-11-17 00:00:00+00:00",
+    "test_from": "2026-02-23 00:00:00+00:00",
+    "test_to": "2026-04-13 00:00:00+00:00",
+    "train_rows": 21808,
+    "train_decisions": 199,
+    "test_rows": 5400,
+    "test_decisions": 98
+   },
+   {
+    "origin": "2026-04-20 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2026-01-12 00:00:00+00:00",
+    "test_from": "2026-04-20 00:00:00+00:00",
+    "test_to": "2026-06-08 00:00:00+00:00",
+    "train_rows": 26504,
+    "train_decisions": 240,
+    "test_rows": 5020,
+    "test_decisions": 92
+   }
+  ],
+  "final_train_rows": 40211,
+  "final_train_decisions": 340,
+  "coverage": {
+   "telemetry_linked": 0.7375312343828085,
+   "gmail": 1.0,
+   "coverage_ok": 0.9636681659170415
+  }
+ },
+ "by_cause": {
+  "acquired": {
+   "decisions": 6,
+   "recall_at_k_arr": 0.24123751713334637,
+   "random_recall": 0.2504245991778649,
+   "unforecastable": true
+  },
+  "brokerage_switch": {
+   "decisions": 3,
+   "recall_at_k_arr": 0.09434951252751861,
+   "random_recall": 0.28150797630392543,
+   "unforecastable": true
+  },
+  "business_closed": {
+   "decisions": 4,
+   "recall_at_k_arr": 0.30601092896174864,
+   "random_recall": 0.2499753227602846,
+   "unforecastable": true
+  },
+  "competitor": {
+   "decisions": 18,
+   "recall_at_k_arr": 0.608073161959891,
+   "random_recall": 0.24780697807712695,
+   "unforecastable": false
+  },
+  "crm_sync": {
+   "decisions": 11,
+   "recall_at_k_arr": 0.7693458743052587,
+   "random_recall": 0.25815626131435493,
+   "unforecastable": false
+  },
+  "data_accuracy": {
+   "decisions": 14,
+   "recall_at_k_arr": 0.6407721267404669,
+   "random_recall": 0.2417964174773665,
+   "unforecastable": false
+  },
+  "deliverability_10dlc": {
+   "decisions": 14,
+   "recall_at_k_arr": 0.6486975145689097,
+   "random_recall": 0.2439593883618346,
+   "unforecastable": false
+  },
+  "feature_gap": {
+   "decisions": 11,
+   "recall_at_k_arr": 0.2855172486963349,
+   "random_recall": 0.2655096097477691,
+   "unforecastable": false
+  },
+  "lead_quality": {
+   "decisions": 9,
+   "recall_at_k_arr": 0.9380469294509409,
+   "random_recall": 0.27616241159304256,
+   "unforecastable": false
+  },
+  "onboarding_training": {
+   "decisions": 37,
+   "recall_at_k_arr": 0.628011455655086,
+   "random_recall": 0.25936838577457366,
+   "unforecastable": false
+  },
+  "price_roi": {
+   "decisions": 15,
+   "recall_at_k_arr": 0.6489317769912171,
+   "random_recall": 0.2548921370034178,
+   "unforecastable": false
+  },
+  "product_bugs": {
+   "decisions": 17,
+   "recall_at_k_arr": 0.676448623943003,
+   "random_recall": 0.24737659015328037,
+   "unforecastable": false
+  },
+  "team_dissolved": {
+   "decisions": 8,
+   "recall_at_k_arr": 0.12736870695238559,
+   "random_recall": 0.24058456727217142,
+   "unforecastable": true
+  },
+  "team_downsized": {
+   "decisions": 23,
+   "recall_at_k_arr": 0.7622698565856286,
+   "random_recall": 0.2821603980559682,
+   "unforecastable": false
+  },
+  "all unforecastable": {
+   "decisions": 21,
+   "recall_at_k_arr": 0.18104503632818378,
+   "random_recall": 0.25056946786877343,
+   "unforecastable": true
+  }
+ },
+ "vp_cases": [
+  {
+   "sf_account_id": "0015g0000jQzwG8AAJ",
+   "name": "Crestline Realty Group",
+   "cause": "crm_sync",
+   "decision_at": "2026-07-24 19:44:01.806991+00:00",
+   "k": 10,
+   "weeks": [
+    {
+     "as_of": "2026-03-09 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-03-16 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-03-23 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-03-30 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-04-06 00:00:00+00:00",
+     "renewal_sort": 34,
+     "model": 15,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-04-13 00:00:00+00:00",
+     "renewal_sort": 32,
+     "model": 16,
+     "book_size": 38
+    },
+    {
+     "as_of": "2026-04-20 00:00:00+00:00",
+     "renewal_sort": 31,
+     "model": 18,
+     "book_size": 39
+    },
+    {
+     "as_of": "2026-04-27 00:00:00+00:00",
+     "renewal_sort": 30,
+     "model": 10,
+     "book_size": 40
+    },
+    {
+     "as_of": "2026-05-04 00:00:00+00:00",
+     "renewal_sort": 26,
+     "model": 5,
+     "book_size": 42
+    },
+    {
+     "as_of": "2026-05-11 00:00:00+00:00",
+     "renewal_sort": 25,
+     "model": 3,
+     "book_size": 43
+    },
+    {
+     "as_of": "2026-05-18 00:00:00+00:00",
+     "renewal_sort": 24,
+     "model": 3,
+     "book_size": 44
+    },
+    {
+     "as_of": "2026-05-25 00:00:00+00:00",
+     "renewal_sort": 23,
+     "model": 3,
+     "book_size": 45
+    },
+    {
+     "as_of": "2026-06-01 00:00:00+00:00",
+     "renewal_sort": 18,
+     "model": 3,
+     "book_size": 41
+    },
+    {
+     "as_of": "2026-06-08 00:00:00+00:00",
+     "renewal_sort": 17,
+     "model": 1,
+     "book_size": 43
+    },
+    {
+     "as_of": "2026-06-15 00:00:00+00:00",
+     "renewal_sort": 15,
+     "model": 1,
+     "book_size": 42
+    },
+    {
+     "as_of": "2026-06-22 00:00:00+00:00",
+     "renewal_sort": 13,
+     "model": 1,
+     "book_size": 42
+    },
+    {
+     "as_of": "2026-06-29 00:00:00+00:00",
+     "renewal_sort": 11,
+     "model": 1,
+     "book_size": 43
+    },
+    {
+     "as_of": "2026-07-06 00:00:00+00:00",
+     "renewal_sort": 10,
+     "model": 6,
+     "book_size": 45
+    },
+    {
+     "as_of": "2026-07-13 00:00:00+00:00",
+     "renewal_sort": 9,
+     "model": 5,
+     "book_size": 44
+    },
+    {
+     "as_of": "2026-07-20 00:00:00+00:00",
+     "renewal_sort": 9,
+     "model": 5,
+     "book_size": 45
+    }
+   ]
+  },
+  {
+   "sf_account_id": "0015g0000mKdgG9AAJ",
+   "name": "Bayside Home Partners",
+   "cause": "crm_sync",
+   "decision_at": "2026-08-10 14:06:16.493012+00:00",
+   "k": 10,
+   "weeks": [
+    {
+     "as_of": "2026-03-30 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-04-06 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-04-13 00:00:00+00:00",
+     "renewal_sort": null,
+     "model": null,
+     "book_size": null
+    },
+    {
+     "as_of": "2026-04-20 00:00:00+00:00",
+     "renewal_sort": 32,
+     "model": 21,
+     "book_size": 32
+    },
+    {
+     "as_of": "2026-04-27 00:00:00+00:00",
+     "renewal_sort": 31,
+     "model": 24,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-05-04 00:00:00+00:00",
+     "renewal_sort": 30,
+     "model": 29,
+     "book_size": 37
+    },
+    {
+     "as_of": "2026-05-11 00:00:00+00:00",
+     "renewal_sort": 28,
+     "model": 28,
+     "book_size": 38
+    },
+    {
+     "as_of": "2026-05-18 00:00:00+00:00",
+     "renewal_sort": 26,
+     "model": 21,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-05-25 00:00:00+00:00",
+     "renewal_sort": 25,
+     "model": 9,
+     "book_size": 35
+    },
+    {
+     "as_of": "2026-06-01 00:00:00+00:00",
+     "renewal_sort": 25,
+     "model": 7,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-06-08 00:00:00+00:00",
+     "renewal_sort": 21,
+     "model": 9,
+     "book_size": 35
+    },
+    {
+     "as_of": "2026-06-15 00:00:00+00:00",
+     "renewal_sort": 20,
+     "model": 9,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-06-22 00:00:00+00:00",
+     "renewal_sort": 16,
+     "model": 8,
+     "book_size": 34
+    },
+    {
+     "as_of": "2026-06-29 00:00:00+00:00",
+     "renewal_sort": 15,
+     "model": 6,
+     "book_size": 35
+    },
+    {
+     "as_of": "2026-07-06 00:00:00+00:00",
+     "renewal_sort": 15,
+     "model": 4,
+     "book_size": 36
+    },
+    {
+     "as_of": "2026-07-13 00:00:00+00:00",
+     "renewal_sort": 14,
+     "model": 4,
+     "book_size": 38
+    },
+    {
+     "as_of": "2026-07-20 00:00:00+00:00",
+     "renewal_sort": 13,
+     "model": 7,
+     "book_size": 38
+    },
+    {
+     "as_of": "2026-07-27 00:00:00+00:00",
+     "renewal_sort": 12,
+     "model": 8,
+     "book_size": 40
+    },
+    {
+     "as_of": "2026-08-03 00:00:00+00:00",
+     "renewal_sort": 8,
+     "model": 9,
+     "book_size": 39
+    },
+    {
+     "as_of": "2026-08-10 00:00:00+00:00",
+     "renewal_sort": 7,
+     "model": 6,
+     "book_size": 38
+    }
+   ]
+  }
+ ],
+ "identity": {
+  "contact_email (gmail)": {
+   "links": 2930,
+   "precision": 1.0,
+   "recall": 0.8702108702108702
+  },
+  "domain (stripe)": {
+   "links": 333,
+   "precision": 1.0,
+   "recall": 0.1280769230769231
+  },
+  "domain (zendesk)": {
+   "links": 585,
+   "precision": 1.0,
+   "recall": 0.30201342281879195
+  },
+  "merge (salesforce)": {
+   "links": 16,
+   "precision": 1.0,
+   "recall": 0.0061092019854906456
+  },
+  "product_metadata (product)": {
+   "links": 1717,
+   "precision": 1.0,
+   "recall": 0.8580709645177411
+  },
+  "sf_id (salesforce)": {
+   "links": 2537,
+   "precision": 1.0,
+   "recall": 0.9686903398243605
+  },
+  "stripe_metadata (stripe)": {
+   "links": 2175,
+   "precision": 1.0,
+   "recall": 0.8365384615384616
+  },
+  "zendesk_external_id (zendesk)": {
+   "links": 1324,
+   "precision": 1.0,
+   "recall": 0.6835312338668044
+  }
+ }
+}

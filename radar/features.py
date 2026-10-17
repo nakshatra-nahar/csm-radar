@@ -271,7 +271,7 @@ def tenure_years(s: Snapshot) -> pd.Series:
 
 
 def term_end(s: Snapshot) -> pd.DataFrame:
-    """term_end v1 and whether the account is month-to-month."""
+    """term_end v1, whether the account is month-to-month, and its Stripe billing interval."""
     subs = _subs(s)
     subs = subs.assign(interval=subs["items"].map(lambda items: items[0]["interval"]))
     yearly = subs[subs["interval"] == "year"].groupby("account_id")["current_period_end"].max()
@@ -285,6 +285,8 @@ def term_end(s: Snapshot) -> pd.DataFrame:
     yearly = yearly.reindex(s.index)
     out = pd.DataFrame({"term_end": yearly.fillna(renewal).fillna(period)}, index=s.index)
     out["month_to_month"] = yearly.isna() & renewal.isna()
+    out["billing_interval"] = np.where(yearly.notna(), "year",
+                                       np.where(period.notna(), "month", None))
     return out
 
 
@@ -417,7 +419,8 @@ def _one(s: Snapshot) -> pd.DataFrame:
     t = s.get(term_end)
     return df.assign(
         arr_minor=s.get(arr)["arr_minor"], arr_source=s.get(arr)["arr_source"],
-        term_end=t["term_end"], month_to_month=t["month_to_month"], owner_user_id=s.get(_owner),
+        term_end=t["term_end"], month_to_month=t["month_to_month"],
+        billing_interval=t["billing_interval"], owner_user_id=s.get(_owner),
         active=s.get(_active), in_dunning=s.get(_in_dunning),
         decision_visible=s.get(_decision_visible), coverage_ok=coverage_ok(s),
         telemetry_linked=s.get(_telemetry), eligible=eligible(s),

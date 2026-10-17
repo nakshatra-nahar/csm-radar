@@ -108,7 +108,20 @@ METRICS = [
        " median) open as held with one incident (radar/policy.py, Task 7)"),
     _m("source_freshness", "Stripe, Zendesk, Gmail 1 h; Salesforce 26 h; product the monthly"
        " batch due on the 3rd + 3 days (radar/agent/handlers.py, Task 9)"),
+    _m("rules_score", "2*integration_broken + 1.5*(open_urgent_tickets>0) +"
+       " 1*(support_friction_90d>0) + 1*(days_since_customer_email>=60) + 1.5*(usage_drop>0.3)"
+       " + 1*(seat_change_180d<-0.1) + 1*not_live_after_30d; a missing feature counts as no"
+       " signal. The rules baseline in evaluation and kitewire's cold-start ranking",
+       "radar.registry:rules_score", unit="points"),
 ]
+
+
+def rules_score(df):
+    """rules_score v1 on a frame of model features (one row per account snapshot)."""
+    return (2 * (df["integration_broken"] > 0) + 1.5 * (df["open_urgent_tickets"] > 0)
+            + 1 * (df["support_friction_90d"] > 0) + 1 * (df["days_since_customer_email"] >= 60)
+            + 1.5 * (df["usage_drop"] > 0.3) + 1 * (df["seat_change_180d"] < -0.1)
+            + 1 * (df["not_live_after_30d"] > 0))
 
 
 def _r(name, source, description):

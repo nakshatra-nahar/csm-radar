@@ -273,6 +273,8 @@ def test_term_end_precedence():
     assert f.loc[m2m, "term_end"] == T + 20 * DAY
     assert list(f.loc[[yearly, contract, m2m], "term_end_within_60d"]) == [1, 0, 1]
     assert list(f.loc[[yearly, contract, m2m], "billing_month_to_month"]) == [0, 0, 1]
+    # the Stripe interval, for reliability per billing interval (design §6)
+    assert list(f.loc[[yearly, contract, m2m], "billing_interval"]) == ["year", "month", "month"]
     assert f.loc[contract, "eligible"] and f.loc[yearly, "eligible"]
 
 

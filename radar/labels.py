@@ -113,9 +113,14 @@ def build_training_set(frames: Frames, tenant: dict, snapshots: list[datetime],
     a decision already visible at T, dunning (eligible already excludes it), an involuntary
     churn or merge inside the window, and windows not settled by label_cutoff."""
     snapshots = [T for T in snapshots if pd.Timestamp(T) + MATURITY <= label_cutoff]
-    df = compute_features(frames, tenant, snapshots)
+    return label_rows(compute_features(frames, tenant, snapshots), churn_decisions(frames))
+
+
+def label_rows(df: pd.DataFrame, decisions: pd.DataFrame) -> pd.DataFrame:
+    """build_training_set's filters and labels on precomputed compute_features rows, with
+    decisions from churn_decisions (on frames cut at a backtest origin, or on all of them)."""
     df = df[df["eligible"] & df["sources_connected"] & ~df["decision_visible"]]
-    d = churn_decisions(frames).set_index("account_id")
+    d = decisions.set_index("account_id")
     accounts = df.index.get_level_values("account_id")
     T = pd.Series(df.index.get_level_values("as_of"), index=df.index)
 

@@ -1,0 +1,504 @@
+{
+ "tenant": "tallyworks",
+ "k": 10,
+ "policies": {
+  "random": {
+   "recall_at_k_arr": 0.19516280283999268,
+   "precision_at_k": 0.07204915506977409,
+   "lift_at_k": 0.9983954345382983,
+   "roc_auc": 0.5,
+   "pr_auc": 0.07216494845360824,
+   "brier": NaN
+  },
+  "renewal_sort": {
+   "recall_at_k_arr": 0.1835547353895717,
+   "precision_at_k": 0.06276041666666667,
+   "lift_at_k": 0.8696800595238096,
+   "roc_auc": 0.44361710361561857,
+   "pr_auc": 0.06456208180359826,
+   "brier": NaN
+  },
+  "arr_sort": {
+   "recall_at_k_arr": 0.5046928439703445,
+   "precision_at_k": 0.07942708333333333,
+   "lift_at_k": 1.1006324404761905,
+   "roc_auc": 0.5142104371925416,
+   "pr_auc": 0.07326722567040181,
+   "brier": NaN
+  },
+  "rules": {
+   "recall_at_k_arr": 0.5040829727799778,
+   "precision_at_k": 0.10911458333333333,
+   "lift_at_k": 1.5120163690476192,
+   "roc_auc": 0.6167503122467108,
+   "pr_auc": 0.11061448953004709,
+   "brier": NaN
+  },
+  "model": {
+   "recall_at_k_arr": 0.594322895764193,
+   "precision_at_k": 0.13463541666666667,
+   "lift_at_k": 1.8656622023809526,
+   "roc_auc": 0.6713646684055832,
+   "pr_auc": 0.13406754615553887,
+   "brier": 0.06612141206722505
+  },
+  "oracle": {
+   "recall_at_k_arr": 0.6879708649676525,
+   "precision_at_k": 0.19921875,
+   "lift_at_k": 2.760602678571429,
+   "roc_auc": 0.8260086285778718,
+   "pr_auc": 0.37761668204246807,
+   "brier": 0.05462930318808586
+  },
+  "gbm": {
+   "recall_at_k_arr": 0.431213139107929,
+   "precision_at_k": 0.11432291666666666,
+   "lift_at_k": 1.5841889880952382,
+   "roc_auc": 0.6127270737837308,
+   "pr_auc": 0.09983689555718428,
+   "brier": 0.07539450617177165
+  }
+ },
+ "ci": {
+  "recall": {
+   "random": {
+    "diff": 0.19516280283999268,
+    "lo": 0.189839113169182,
+    "hi": 0.200750154392706
+   },
+   "renewal_sort": {
+    "diff": 0.1835547353895717,
+    "lo": 0.15074631622066403,
+    "hi": 0.215878993226496
+   },
+   "arr_sort": {
+    "diff": 0.5046928439703445,
+    "lo": 0.382633355806749,
+    "hi": 0.6081694149787055
+   },
+   "rules": {
+    "diff": 0.5040829727799778,
+    "lo": 0.4108958712103842,
+    "hi": 0.5808250224404623
+   },
+   "model": {
+    "diff": 0.594322895764193,
+    "lo": 0.5040586151024276,
+    "hi": 0.6748958720248144
+   },
+   "oracle": {
+    "diff": 0.6879708649676525,
+    "lo": 0.6062306403399625,
+    "hi": 0.7511957025987815
+   },
+   "gbm": {
+    "diff": 0.431213139107929,
+    "lo": 0.3544140424283856,
+    "hi": 0.5060683715308786
+   }
+  },
+  "model_minus_renewal_sort": {
+   "diff": 0.41076816037462127,
+   "lo": 0.3136958800430157,
+   "hi": 0.4955990964141172
+  },
+  "model_minus_rules": {
+   "diff": 0.09023992298421513,
+   "lo": 0.01971304045693297,
+   "hi": 0.17168945654832476
+  }
+ },
+ "reliability": {
+  "month": {
+   "rows": 13351,
+   "ece": 0.016764127705668576,
+   "bins": [
+    {
+     "mean_p": 0.014408920274492268,
+     "rate": 0.023952095808383235,
+     "rows": 1336
+    },
+    {
+     "mean_p": 0.02334016346456895,
+     "rate": 0.027715355805243445,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.03075393689879412,
+     "rate": 0.035955056179775284,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.03842848044471998,
+     "rate": 0.05393258426966292,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.04701314644597795,
+     "rate": 0.044194756554307116,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.05702351498422419,
+     "rate": 0.0749063670411985,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.06868054849593802,
+     "rate": 0.07265917602996255,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.08503152428735959,
+     "rate": 0.07415730337078652,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.1106343086876326,
+     "rate": 0.0951310861423221,
+     "rows": 1335
+    },
+    {
+     "mean_p": 0.21455005174750197,
+     "rate": 0.13258426966292136,
+     "rows": 1335
+    }
+   ]
+  },
+  "year": {
+   "rows": 6146,
+   "ece": 0.019016528919026505,
+   "bins": [
+    {
+     "mean_p": 0.012901725065602642,
+     "rate": 0.024390243902439025,
+     "rows": 615
+    },
+    {
+     "mean_p": 0.02208704289581311,
+     "rate": 0.027642276422764227,
+     "rows": 615
+    },
+    {
+     "mean_p": 0.02999612933291884,
+     "rate": 0.057003257328990226,
+     "rows": 614
+    },
+    {
+     "mean_p": 0.03805747632936462,
+     "rate": 0.05040650406504065,
+     "rows": 615
+    },
+    {
+     "mean_p": 0.04695662056294236,
+     "rate": 0.05863192182410423,
+     "rows": 614
+    },
+    {
+     "mean_p": 0.05776658963488432,
+     "rate": 0.06829268292682927,
+     "rows": 615
+    },
+    {
+     "mean_p": 0.07246038123711117,
+     "rate": 0.10912052117263844,
+     "rows": 614
+    },
+    {
+     "mean_p": 0.09252995025908167,
+     "rate": 0.12195121951219512,
+     "rows": 615
+    },
+    {
+     "mean_p": 0.1253298530705932,
+     "rate": 0.15960912052117263,
+     "rows": 614
+    },
+    {
+     "mean_p": 0.2437781972535694,
+     "rate": 0.23252032520325203,
+     "rows": 615
+    }
+   ]
+  }
+ },
+ "lead_time": {
+  "decisions": 174,
+  "flagged": 70,
+  "median_weeks": 11.81089699074074,
+  "share_6w": 0.2988505747126437
+ },
+ "hindsight_vs_pit": {
+  "pit_auc": 0.6713646684055832,
+  "hindsight_auc": 0.6723419740906932
+ },
+ "ablation": {
+  "product": {
+   "recall_at_k_arr": 0.48589972188065605,
+   "delta": -0.1084231738835369
+  },
+  "zendesk": {
+   "recall_at_k_arr": 0.5906670893738619,
+   "delta": -0.003655806390331029
+  },
+  "gmail": {
+   "recall_at_k_arr": 0.6047224701249246,
+   "delta": 0.01039957436073169
+  },
+  "billing": {
+   "recall_at_k_arr": 0.5797651531672192,
+   "delta": -0.014557742596973733
+  },
+  "crm": {
+   "recall_at_k_arr": 0.5694838390853887,
+   "delta": -0.02483905667880426
+  }
+ },
+ "outage_week": {
+  "outage_week": "2026-03-09 00:00:00+00:00",
+  "outage_max_new": 3,
+  "median_max_new": 3.0,
+  "by_week": {
+   "2025-11-10": 4,
+   "2025-11-17": 2,
+   "2025-11-24": 2,
+   "2025-12-01": 2,
+   "2025-12-08": 3,
+   "2025-12-15": 2,
+   "2025-12-22": 1,
+   "2025-12-29": 2,
+   "2026-01-05": 4,
+   "2026-01-12": 2,
+   "2026-01-19": 2,
+   "2026-01-26": 3,
+   "2026-02-02": 3,
+   "2026-02-09": 3,
+   "2026-02-16": 2,
+   "2026-02-23": 3,
+   "2026-03-02": 3,
+   "2026-03-09": 3,
+   "2026-03-16": 3,
+   "2026-03-23": 2,
+   "2026-03-30": 2,
+   "2026-04-06": 3,
+   "2026-04-13": 4,
+   "2026-04-20": 3,
+   "2026-04-27": 3,
+   "2026-05-04": 3,
+   "2026-05-11": 3,
+   "2026-05-18": 3,
+   "2026-05-25": 2,
+   "2026-06-01": 2,
+   "2026-06-08": 3
+  }
+ },
+ "coef": {
+  "usage_drop": 0.07454703332972222,
+  "seat_utilization": -0.42252130349224054,
+  "integration_broken": 0.12191886690229456,
+  "not_live_after_30d": 0.17022837977869007,
+  "open_urgent_tickets": 0.14134456073530002,
+  "support_friction_90d": 0.12289667504999734,
+  "days_since_customer_email": 0.2122926724313626,
+  "seat_change_180d": -0.20031275953387231,
+  "log_arr": -0.03055729842792366,
+  "tenure_years": -0.11351046138914765,
+  "term_end_within_60d": -0.2066190802532726,
+  "billing_month_to_month": 0.09521951889214933,
+  "no_telemetry": 0.1586491018313766
+ },
+ "signs": [],
+ "difficulty": {
+  "max_single_auc": 0.69469984723172,
+  "max_single_feature": "seat_utilization",
+  "full_model_auc": 0.7151718271093913,
+  "single_auc": {
+   "usage_drop": 0.555225968106932,
+   "seat_utilization": 0.69469984723172,
+   "integration_broken": 0.5379524465082155,
+   "not_live_after_30d": 0.5685159943293374,
+   "open_urgent_tickets": 0.5218443731878865,
+   "support_friction_90d": 0.5493089440867472,
+   "days_since_customer_email": 0.5839792148313216,
+   "seat_change_180d": 0.5316972932626887,
+   "log_arr": 0.5282200923777274,
+   "tenure_years": 0.5651525471030587,
+   "term_end_within_60d": 0.5392316625588963,
+   "billing_month_to_month": 0.5268035935442402,
+   "no_telemetry": 0.5122409266829476
+  },
+  "oracle_auc": 0.8427341430370219
+ },
+ "counts": {
+  "origins": [
+   {
+    "origin": "2025-11-03 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-07-28 00:00:00+00:00",
+    "test_from": "2025-11-03 00:00:00+00:00",
+    "test_to": "2025-12-22 00:00:00+00:00",
+    "train_rows": 14484,
+    "train_decisions": 158,
+    "test_rows": 4801,
+    "test_decisions": 75
+   },
+   {
+    "origin": "2025-12-29 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-09-22 00:00:00+00:00",
+    "test_from": "2025-12-29 00:00:00+00:00",
+    "test_to": "2026-02-16 00:00:00+00:00",
+    "train_rows": 19099,
+    "train_decisions": 190,
+    "test_rows": 4833,
+    "test_decisions": 81
+   },
+   {
+    "origin": "2026-02-23 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2025-11-17 00:00:00+00:00",
+    "test_from": "2026-02-23 00:00:00+00:00",
+    "test_to": "2026-04-13 00:00:00+00:00",
+    "train_rows": 23857,
+    "train_decisions": 234,
+    "test_rows": 4824,
+    "test_decisions": 61
+   },
+   {
+    "origin": "2026-04-20 00:00:00+00:00",
+    "train_from": "2025-02-03 00:00:00+00:00",
+    "train_to": "2026-01-12 00:00:00+00:00",
+    "test_from": "2026-04-20 00:00:00+00:00",
+    "test_to": "2026-06-08 00:00:00+00:00",
+    "train_rows": 28687,
+    "train_decisions": 263,
+    "test_rows": 5039,
+    "test_decisions": 71
+   }
+  ],
+  "final_train_rows": 41565,
+  "final_train_decisions": 351,
+  "coverage": {
+   "telemetry_linked": 0.7419090116428169,
+   "gmail": 1.0,
+   "coverage_ok": 0.9425039749705083
+  }
+ },
+ "by_cause": {
+  "acquired": {
+   "decisions": 6,
+   "recall_at_k_arr": 0.25346817062102944,
+   "random_recall": 0.1974741095223978,
+   "unforecastable": true
+  },
+  "bank_feed_issues": {
+   "decisions": 17,
+   "recall_at_k_arr": 0.9260912640164548,
+   "random_recall": 0.20168623957633364,
+   "unforecastable": false
+  },
+  "business_closed": {
+   "decisions": 7,
+   "recall_at_k_arr": 0.022774824215400447,
+   "random_recall": 0.19004105117554926,
+   "unforecastable": true
+  },
+  "competitor": {
+   "decisions": 11,
+   "recall_at_k_arr": 0.5970113424953489,
+   "random_recall": 0.20130920586858495,
+   "unforecastable": false
+  },
+  "cost_cutting": {
+   "decisions": 15,
+   "recall_at_k_arr": 0.6153078576977082,
+   "random_recall": 0.1882850766113833,
+   "unforecastable": false
+  },
+  "missing_feature": {
+   "decisions": 12,
+   "recall_at_k_arr": 0.5290506856180359,
+   "random_recall": 0.189237377898301,
+   "unforecastable": false
+  },
+  "onboarding": {
+   "decisions": 44,
+   "recall_at_k_arr": 0.6633813927477565,
+   "random_recall": 0.19304794119891194,
+   "unforecastable": false
+  },
+  "price": {
+   "decisions": 18,
+   "recall_at_k_arr": 0.6281748886682998,
+   "random_recall": 0.18840956257237512,
+   "unforecastable": false
+  },
+  "product_bugs": {
+   "decisions": 17,
+   "recall_at_k_arr": 0.5148832874574655,
+   "random_recall": 0.18892949653923147,
+   "unforecastable": false
+  },
+  "support_experience": {
+   "decisions": 19,
+   "recall_at_k_arr": 0.4681578360704466,
+   "random_recall": 0.20214674407266606,
+   "unforecastable": false
+  },
+  "team_dissolved": {
+   "decisions": 8,
+   "recall_at_k_arr": 0.14775595641199285,
+   "random_recall": 0.20798778142471416,
+   "unforecastable": true
+  },
+  "all unforecastable": {
+   "decisions": 21,
+   "recall_at_k_arr": 0.15664684306114454,
+   "random_recall": 0.20079581084881018,
+   "unforecastable": true
+  }
+ },
+ "vp_cases": [],
+ "identity": {
+  "contact_email (gmail)": {
+   "links": 1840,
+   "precision": 1.0,
+   "recall": 0.8675153229608675
+  },
+  "domain (stripe)": {
+   "links": 266,
+   "precision": 1.0,
+   "recall": 0.133
+  },
+  "domain (zendesk)": {
+   "links": 388,
+   "precision": 1.0,
+   "recall": 0.30623520126282555
+  },
+  "merge (salesforce)": {
+   "links": 15,
+   "precision": 1.0,
+   "recall": 0.007422068283028204
+  },
+  "product_metadata (product)": {
+   "links": 1236,
+   "precision": 1.0,
+   "recall": 0.8589298123697012
+  },
+  "sf_id (salesforce)": {
+   "links": 1953,
+   "precision": 0.9994879672299027,
+   "recall": 0.9658584858980702
+  },
+  "stripe_metadata (stripe)": {
+   "links": 1660,
+   "precision": 1.0,
+   "recall": 0.83
+  },
+  "zendesk_external_id (zendesk)": {
+   "links": 854,
+   "precision": 1.0,
+   "recall": 0.6740331491712708
+  }
+ }
+}

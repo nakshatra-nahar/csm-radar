@@ -56,20 +56,29 @@ def feature_table(train: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame.from_dict(rows, orient="index").reindex(columns=COLUMNS)
 
 
-def oracle_auc(train: pd.DataFrame, accounts: pd.DataFrame, weekly: pd.DataFrame) -> float:
-    """In-sample AUC of a logistic regression on latent health known before T (the last
-    week's h, its 8-week mean and slope) plus contract state (design §3.6)."""
+ORACLE = ["h", "mean8", "slope", "billing_month_to_month", "term_end_within_60d"]
+
+
+def oracle_features(rows: pd.DataFrame, accounts: pd.DataFrame,
+                    weekly: pd.DataFrame) -> pd.DataFrame:
+    """Per row: latent health known before T (the last week's h, its 8-week mean and slope)
+    plus contract state (design §3.6). NaN h where the truth has no week before T."""
     w = weekly.assign(week=pd.to_datetime(weekly["week_start"])).sort_values(
         ["sf_account_id", "week"])
     g = w.groupby("sf_account_id")["h"]
     w = w.assign(mean8=g.transform(lambda h: h.rolling(8, min_periods=1).mean()),
                  slope=g.diff(7).fillna(0) / 7).set_index(["sf_account_id", "week"])
     sf = accounts.set_index("id")["sf_account_id"]
-    T = train.index.get_level_values("as_of")
-    key = pd.MultiIndex.from_arrays([sf.reindex(train.index.get_level_values("account_id")),
+    T = rows.index.get_level_values("as_of")
+    key = pd.MultiIndex.from_arrays([sf.reindex(rows.index.get_level_values("account_id")),
                                      (T - pd.Timedelta(days=7)).tz_localize(None).normalize()])
-    X = w[["h", "mean8", "slope"]].reindex(key).set_axis(train.index)
-    X = X.join(train[["billing_month_to_month", "term_end_within_60d"]].fillna(0)).dropna()
+    X = w[["h", "mean8", "slope"]].reindex(key).set_axis(rows.index)
+    return X.join(rows[["billing_month_to_month", "term_end_within_60d"]].fillna(0))[ORACLE]
+
+
+def oracle_auc(train: pd.DataFrame, accounts: pd.DataFrame, weekly: pd.DataFrame) -> float:
+    """In-sample AUC of a logistic regression on oracle_features (design §3.6)."""
+    X = oracle_features(train, accounts, weekly).dropna()
     y = train["label"].loc[X.index]
     lr = make_pipeline(StandardScaler(), LogisticRegression()).fit(X, y)
     return roc_auc_score(y, lr.predict_proba(X)[:, 1])
