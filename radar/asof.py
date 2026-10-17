@@ -21,6 +21,8 @@ ATTRS = """
  to_timestamp((attrs->>'cancel_at')::bigint) AS cancel_at,
  to_timestamp((attrs->>'current_period_end')::bigint) AS current_period_end,
  to_timestamp((attrs->>'start_date')::bigint) AS start_date,
+ to_timestamp((attrs->>'ended_at')::bigint) AS ended_at,
+ attrs->>'cancellation_reason' AS cancellation_reason,
  attrs->>'event_type' AS event_type, (attrs->>'attempt_count')::int AS attempt_count,
  to_timestamp((attrs->>'next_payment_attempt')::bigint) AS next_payment_attempt,
  attrs->>'subscription_id' AS subscription_id,
@@ -37,7 +39,8 @@ EVENT_COLUMNS = ["id", "source", "type", "entity_id", "account_ref", "occurred_a
                  "available_at", "version_key", "status", "priority", "amount_minor",
                  "quantity", *re.findall(r" AS (\w+)", ATTRS)]
 TIMES = ["occurred_at", "available_at", "renewal_date", "cancel_at", "current_period_end",
-         "start_date", "next_payment_attempt", "invoice_period_end", "ticket_created_at"]
+         "start_date", "ended_at", "next_payment_attempt", "invoice_period_end",
+         "ticket_created_at"]
 
 
 @dataclass
