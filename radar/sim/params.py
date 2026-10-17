@@ -131,4 +131,20 @@ PARAMS: dict = {
         "hearthline_derived": {"delivered": (0.95, 0.99), "open_rate": (0.1, 0.25),
                                "handoff_rate": 0.025, "lead_score": (30, 50, 3)},
     },
+    # vendor payload and delivery mess (design §3.5); shares are of records unless named
+    "feed": {
+        # customers: metadata present / mangled when present / key renamed to salesforce_id;
+        # a missing id is added later by a customer.updated with prob metadata_fixed;
+        # billing email on a free-mail (or, hearthline, franchise) domain
+        "stripe": {"metadata": 0.85, "messy_id": 0.2, "salesforce_id_key": 0.05,
+                   "metadata_fixed": 0.3, "free_mail": 0.1,
+                   "tail": 0.015, "tail_mean_hours": 12, "redeliver": 0.01, "twin": 0.003},
+        "zendesk": {"org_external_id": 0.7, "duplicate": 0.005},
+        "salesforce": {"reexport": 0.02},
+        "gmail": {"date_skew": 0.05},
+        # sf_account_id present on usage rows; late batches are 1-9 days late; restated rows
+        # get version+1 within 3 days; one month per tenant is reprocessed ~30 days later
+        "product": {"sf_account_id": 0.9, "messy_id": 0.2, "late_batch": 0.1,
+                    "restate": 0.03, "future": 0.001},
+    },
 }
