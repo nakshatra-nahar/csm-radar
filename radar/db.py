@@ -1,0 +1,61 @@
+"""The only way app code reaches Postgres: tenant_tx() or system_tx() on a pooled connection."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from uuid import UUID
+
+import psycopg
+from psycopg.rows import DictRow, dict_row, tuple_row
+from psycopg_pool import ConnectionPool
+
+Conn = psycopg.Connection[DictRow]
+
+
+class Database:
+    def __init__(self, dsn: str, min_size: int = 1, max_size: int = 8) -> None:
+        # autocommit: transaction() below is the only transaction boundary.
+        self.pool = ConnectionPool(
+            dsn,
+            connection_class=Conn,
+            kwargs={"autocommit": True, "row_factory": dict_row},
+            min_size=min_size,
+            max_size=max_size,
+            open=True,
+        )
+
+    @contextmanager
+    def tenant_tx(self, tenant_id: UUID | str, actor: str = "system") -> Iterator[Conn]:
+        """One transaction scoped to a tenant; RLS policies read app.tenant_id."""
+        with self.pool.connection() as conn, conn.transaction():
+            # is_local=true: both settings end with the transaction, so a pooled
+            # connection never carries one tenant into the next checkout.
+            conn.execute(
+                "SELECT set_config('app.tenant_id', %s, true), set_config('app.actor', %s, true)",
+                (str(tenant_id), actor),
+            )
+            yield conn
+
+    @contextmanager
+    def system_tx(self) -> Iterator[Conn]:
+        """A transaction with no tenant set: tenant tables read as empty."""
+        with self.pool.connection() as conn, conn.transaction():
+            yield conn
+
+    def close(self) -> None:
+        self.pool.close()
+
+
+def assert_role_safety(conn: psycopg.Connection) -> None:
+    """Refuse to run as a role that RLS would not constrain."""
+    row = conn.cursor(row_factory=tuple_row).execute(
+        "SELECT r.rolname, r.rolsuper, r.rolbypassrls,"
+        " EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+        "         WHERE n.nspname = 'public' AND c.relowner = r.oid) AS owns_tables"
+        " FROM pg_roles r WHERE r.rolname = current_user"
+    ).fetchone()
+    name, superuser, bypassrls, owns = row
+    if superuser or bypassrls or owns:
+        raise RuntimeError(
+            f"role {name} is unsafe for the app (superuser={superuser},"
+            f" bypassrls={bypassrls}, owns_tables={owns})"
+        )
