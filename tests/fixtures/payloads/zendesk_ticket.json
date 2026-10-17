@@ -1,0 +1,33 @@
+{
+  "body": {
+    "created_at": "2023-10-16T13:31:51Z",
+    "description": "Felix calls not logging. Several people on our team have seen this since this morning.",
+    "generated_timestamp": 1697463111,
+    "id": 10001,
+    "organization_id": 360000001071,
+    "priority": "high",
+    "problem_id": null,
+    "requester_id": 21500000000000,
+    "satisfaction_rating": {
+      "score": "unoffered"
+    },
+    "status": "new",
+    "subject": "Felix calls not logging",
+    "tags": [
+      "bug"
+    ],
+    "type": "incident",
+    "updated_at": "2023-10-16T13:31:51Z",
+    "url": "https://hearthline.zendesk.com/api/v2/tickets/10001.json",
+    "via": {
+      "channel": "web"
+    }
+  },
+  "channel": "sync",
+  "deliver_at": "2023-10-16T13:34:12Z",
+  "headers": {},
+  "meta": {
+    "export": "tickets"
+  },
+  "source": "zendesk"
+}

@@ -1,0 +1,83 @@
+{
+  "body": {
+    "id": "537d7a2cb9f885c0",
+    "internalDate": "1735831579424",
+    "labelIds": [
+      "INBOX"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "Mail Delivery Subsystem <mailer-daemon@googlemail.com>"
+        },
+        {
+          "name": "To",
+          "value": "mateo.johnson@hearthline.io"
+        },
+        {
+          "name": "Date",
+          "value": "Thu, 02 Jan 2025 15:26:19 +0000"
+        },
+        {
+          "name": "Subject",
+          "value": "Delivery Status Notification (Failure)"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<UA1q1VKY6PEZxSCbERKu@mail.gmail.com>"
+        },
+        {
+          "name": "In-Reply-To",
+          "value": "<DyBkLp7DoV1WEMH8JhEL@mail.gmail.com>"
+        },
+        {
+          "name": "Auto-Submitted",
+          "value": "auto-replied"
+        },
+        {
+          "name": "X-Failed-Recipients",
+          "value": "ashley.hernandez@martinezrealtypartners.com"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/report; report-type=delivery-status; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/report",
+      "parts": [
+        {
+          "headers": [],
+          "mimeType": "text/plain",
+          "partId": "0"
+        },
+        {
+          "headers": [
+            {
+              "name": "Final-Recipient",
+              "value": "rfc822; ashley.hernandez@martinezrealtypartners.com"
+            },
+            {
+              "name": "Action",
+              "value": "failed"
+            },
+            {
+              "name": "Status",
+              "value": "5.1.1"
+            }
+          ],
+          "mimeType": "message/delivery-status",
+          "partId": "1"
+        }
+      ]
+    },
+    "threadId": "fe60ccb13a4009fa"
+  },
+  "channel": "sync",
+  "deliver_at": "2025-01-02T15:30:17Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "mateo.johnson@hearthline.io"
+  },
+  "source": "gmail"
+}

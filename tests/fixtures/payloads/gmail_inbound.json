@@ -1,0 +1,50 @@
+{
+  "body": {
+    "id": "5e1ba6e90759f6b4",
+    "internalDate": "1728464968811",
+    "labelIds": [
+      "INBOX"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "patricia.martinez63@gmail.com"
+        },
+        {
+          "name": "To",
+          "value": "susan.anderson@hearthline.io"
+        },
+        {
+          "name": "Date",
+          "value": "Wed, 09 Oct 2024 10:09:28 +0100"
+        },
+        {
+          "name": "Subject",
+          "value": "Re: Checking in"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<bUt1Cib4SXicQSJdg4hu@gmail.com>"
+        },
+        {
+          "name": "In-Reply-To",
+          "value": "<Met5z7WyzvtvhNSMBFVW@mail.gmail.com>"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/alternative"
+    },
+    "threadId": "f791b17d09e234f2"
+  },
+  "channel": "sync",
+  "deliver_at": "2024-10-09T09:15:10Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "susan.anderson@hearthline.io"
+  },
+  "source": "gmail"
+}

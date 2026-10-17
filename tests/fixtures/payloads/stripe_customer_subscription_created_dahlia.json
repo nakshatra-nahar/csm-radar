@@ -1,0 +1,60 @@
+{
+  "body": {
+    "api_version": "2026-03-25.dahlia",
+    "created": 1769932800,
+    "data": {
+      "object": {
+        "cancel_at": null,
+        "cancel_at_period_end": false,
+        "canceled_at": null,
+        "cancellation_details": {
+          "reason": null
+        },
+        "created": 1769932800,
+        "customer": "cus_conR7vgYCeqnON",
+        "ended_at": null,
+        "id": "sub_PFFl9vj72JJNMHa1h91DI0br",
+        "items": {
+          "data": [
+            {
+              "current_period_end": 1796857200,
+              "id": "si_PFFl9vj72JJNMH",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_business_yearly",
+                "object": "price",
+                "recurring": {
+                  "interval": "year",
+                  "interval_count": 1
+                },
+                "unit_amount": 34860
+              },
+              "quantity": 89
+            }
+          ],
+          "object": "list"
+        },
+        "object": "subscription",
+        "start_date": 1765321200,
+        "status": "active"
+      }
+    },
+    "id": "evt_Fozio60EK37n6jtQ9NE8IDpj",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_taLRKAv3tt7qjE",
+      "idempotency_key": "68ae224805eee4129e2b3f1eefba4aed"
+    },
+    "type": "customer.subscription.created"
+  },
+  "channel": "webhook",
+  "deliver_at": "2026-02-01T08:00:01Z",
+  "headers": {
+    "Stripe-Signature": "t=1769932801,kid=kitewire-stripe,v1=90178d0364ada51c1e66261c8b76d3ab7770ae2c33829dbe1ab661927e218426"
+  },
+  "meta": {},
+  "source": "stripe"
+}

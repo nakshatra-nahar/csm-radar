@@ -1,0 +1,39 @@
+{
+  "body": {
+    "api_version": "2025-03-31.basil",
+    "created": 1756607472,
+    "data": {
+      "object": {
+        "created": 1744916400,
+        "currency": "usd",
+        "email": "billing@kingsleyrealtypartners.com",
+        "id": "cus_tGb6aR1gCrK8rj",
+        "livemode": true,
+        "metadata": {
+          "sf_account_id": "0015g00002aX6IJAA0"
+        },
+        "name": "Kingsley Realty Partners",
+        "object": "customer"
+      },
+      "previous_attributes": {
+        "metadata": {}
+      }
+    },
+    "id": "evt_a4bZduaMJeNxZGI5HrSJGEgm",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_qhwSjjNPBGSeqA",
+      "idempotency_key": "c49da5205b6f7f8fe256f8d3ec1ce825"
+    },
+    "type": "customer.updated"
+  },
+  "channel": "webhook",
+  "deliver_at": "2025-08-31T02:31:15Z",
+  "headers": {
+    "Stripe-Signature": "t=1756607475,kid=hearthline-stripe,v1=305b37917cb24d911cfb5a94b4277ce87904be1e713a1ee5603353e42b1eafa4"
+  },
+  "meta": {},
+  "source": "stripe"
+}

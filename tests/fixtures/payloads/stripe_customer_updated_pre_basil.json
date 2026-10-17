@@ -1,0 +1,39 @@
+{
+  "body": {
+    "api_version": "2024-06-20",
+    "created": 1699298805,
+    "data": {
+      "object": {
+        "created": 1697436000,
+        "currency": "usd",
+        "email": "billing@silvermartinezrealty.com",
+        "id": "cus_kP5MWlkj5a0rO1",
+        "livemode": true,
+        "metadata": {
+          "sf_account_id": "0015g0000kdi8JFAAY"
+        },
+        "name": "Silver Martinez Realty",
+        "object": "customer"
+      },
+      "previous_attributes": {
+        "metadata": {}
+      }
+    },
+    "id": "evt_lZ3fkVHRuFJHyP2YVT4C8uu5",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_fnkvY10zZhBzWz",
+      "idempotency_key": "bc280f45cea93bff8fa616d0038ebdcc"
+    },
+    "type": "customer.updated"
+  },
+  "channel": "webhook",
+  "deliver_at": "2023-11-06T19:26:49Z",
+  "headers": {
+    "Stripe-Signature": "t=1699298809,kid=hearthline-stripe,v1=c010cec040bca16bd624a7ca6c3ac6098ce2cf503b70c591f07df9c51c2e091f"
+  },
+  "meta": {},
+  "source": "stripe"
+}

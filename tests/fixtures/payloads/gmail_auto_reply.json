@@ -1,0 +1,54 @@
+{
+  "body": {
+    "id": "0307641349e9a688",
+    "internalDate": "1730466283145",
+    "labelIds": [
+      "INBOX"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "william.nguyen@goldenhometeam.com"
+        },
+        {
+          "name": "To",
+          "value": "jessica.young@hearthline.io"
+        },
+        {
+          "name": "Date",
+          "value": "Fri, 01 Nov 2024 13:04:43 +0000"
+        },
+        {
+          "name": "Subject",
+          "value": "Automatic reply: Training session follow-up"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<bxoz16eZfdYNX2DEMDSN@goldenhometeam.com>"
+        },
+        {
+          "name": "In-Reply-To",
+          "value": "<j4Xk4Wcy6cKQodXO5qnc@mail.gmail.com>"
+        },
+        {
+          "name": "Auto-Submitted",
+          "value": "auto-replied"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/alternative"
+    },
+    "threadId": "635deeeb1c3d250a"
+  },
+  "channel": "sync",
+  "deliver_at": "2024-11-01T13:15:52Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "jessica.young@hearthline.io"
+  },
+  "source": "gmail"
+}

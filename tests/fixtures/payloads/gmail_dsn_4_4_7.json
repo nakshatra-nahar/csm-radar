@@ -1,0 +1,83 @@
+{
+  "body": {
+    "id": "89d8c263d9b84f10",
+    "internalDate": "1738346553896",
+    "labelIds": [
+      "INBOX"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "Mail Delivery Subsystem <mailer-daemon@googlemail.com>"
+        },
+        {
+          "name": "To",
+          "value": "susan.adams@hearthline.io"
+        },
+        {
+          "name": "Date",
+          "value": "Fri, 31 Jan 2025 18:02:33 +0000"
+        },
+        {
+          "name": "Subject",
+          "value": "Delivery Status Notification (Delay)"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<eZ19BHAhdqgwgdzZneSf@mail.gmail.com>"
+        },
+        {
+          "name": "In-Reply-To",
+          "value": "<uJWKg5mUznDh060IpECi@mail.gmail.com>"
+        },
+        {
+          "name": "Auto-Submitted",
+          "value": "auto-replied"
+        },
+        {
+          "name": "X-Failed-Recipients",
+          "value": "patricia.king@fairviewhometeam.com"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/report; report-type=delivery-status; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/report",
+      "parts": [
+        {
+          "headers": [],
+          "mimeType": "text/plain",
+          "partId": "0"
+        },
+        {
+          "headers": [
+            {
+              "name": "Final-Recipient",
+              "value": "rfc822; patricia.king@fairviewhometeam.com"
+            },
+            {
+              "name": "Action",
+              "value": "delayed"
+            },
+            {
+              "name": "Status",
+              "value": "4.4.7"
+            }
+          ],
+          "mimeType": "message/delivery-status",
+          "partId": "1"
+        }
+      ]
+    },
+    "threadId": "f124e97c19d19a17"
+  },
+  "channel": "sync",
+  "deliver_at": "2025-01-31T18:15:25Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "susan.adams@hearthline.io"
+  },
+  "source": "gmail"
+}

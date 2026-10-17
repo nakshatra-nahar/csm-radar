@@ -1,0 +1,46 @@
+{
+  "body": {
+    "id": "772be3d7a3a3aa5d",
+    "internalDate": "1728317616872",
+    "labelIds": [
+      "SENT"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "Grace Thompson <grace.thompson@hearthline.io>"
+        },
+        {
+          "name": "To",
+          "value": "daniel.adams@pineriverapropertygroup.com"
+        },
+        {
+          "name": "Date",
+          "value": "Mon, 07 Oct 2024 12:13:36 -0400"
+        },
+        {
+          "name": "Subject",
+          "value": "Renewal planning"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<woQWWYdMAT4ofUUCfPq7@mail.gmail.com>"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/alternative"
+    },
+    "threadId": "772be3d7a3a3aa5d"
+  },
+  "channel": "sync",
+  "deliver_at": "2024-10-07T16:15:00Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "grace.thompson@hearthline.io"
+  },
+  "source": "gmail"
+}

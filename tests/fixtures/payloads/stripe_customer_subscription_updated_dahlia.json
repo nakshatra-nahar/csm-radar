@@ -1,0 +1,84 @@
+{
+  "body": {
+    "api_version": "2026-03-25.dahlia",
+    "created": 1773702000,
+    "data": {
+      "object": {
+        "cancel_at": null,
+        "cancel_at_period_end": false,
+        "canceled_at": null,
+        "cancellation_details": {
+          "reason": null
+        },
+        "created": 1769932800,
+        "customer": "cus_l7RCnPKGSZK5zH",
+        "ended_at": null,
+        "id": "sub_gf4CdP9gfjJ8FQOyuj2cUSWX",
+        "items": {
+          "data": [
+            {
+              "current_period_end": 1776376800,
+              "id": "si_gf4CdP9gfjJ8FQ",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_team_monthly",
+                "object": "price",
+                "recurring": {
+                  "interval": "month",
+                  "interval_count": 1
+                },
+                "unit_amount": 2500
+              },
+              "quantity": 6
+            }
+          ],
+          "object": "list"
+        },
+        "object": "subscription",
+        "start_date": 1763334000,
+        "status": "past_due"
+      },
+      "previous_attributes": {
+        "items": {
+          "data": [
+            {
+              "current_period_end": 1771282800,
+              "id": "si_gf4CdP9gfjJ8FQ",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_team_monthly",
+                "object": "price",
+                "recurring": {
+                  "interval": "month",
+                  "interval_count": 1
+                },
+                "unit_amount": 2500
+              },
+              "quantity": 6
+            }
+          ],
+          "object": "list"
+        },
+        "status": "active"
+      }
+    },
+    "id": "evt_Gdwz9JYaFnUhez7mNrwqHjPw",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "type": "customer.subscription.updated"
+  },
+  "channel": "webhook",
+  "deliver_at": "2026-03-16T23:00:21Z",
+  "headers": {
+    "Stripe-Signature": "t=1773702021,kid=kitewire-stripe,v1=a6c2f75aac81239cbd85507c4761661d8fa7162f4525778ec210a2bf109af049"
+  },
+  "meta": {},
+  "source": "stripe"
+}

@@ -1,0 +1,25 @@
+{
+  "body": {
+    "ARR__c": null,
+    "CSM__c": null,
+    "Id": "0015g0000FPEkKOAQ1",
+    "IsDeleted": true,
+    "Is_Test__c": false,
+    "MasterRecordId": "0015g0000HC2LjEAQV",
+    "Name": "Jones Garage",
+    "OwnerId": "0055g000008svSZAAY",
+    "Renewal_Date__c": null,
+    "Segment__c": null,
+    "SystemModstamp": "2026-12-11T13:00:00.000+0000",
+    "Type": "Prospect",
+    "Website": "http://jonesgarage.co.uk",
+    "attributes": {
+      "type": "Account"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2026-12-12T02:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

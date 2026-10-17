@@ -1,0 +1,22 @@
+{
+  "body": {
+    "AccountId": "0015g00000QLBlYAAX",
+    "Champion__c": false,
+    "Email": "ashley.nguyen@ashforddavisflorists.co.uk",
+    "FirstName": "Ashley",
+    "HasOptedOutOfEmail": false,
+    "Id": "0035g0000bbSTryAAG",
+    "IsDeleted": false,
+    "LastName": "Nguyen",
+    "SystemModstamp": "2023-10-16T06:00:00.000+0000",
+    "Title": "Finance Manager",
+    "attributes": {
+      "type": "Contact"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2023-10-17T01:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

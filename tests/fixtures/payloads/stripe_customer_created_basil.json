@@ -1,0 +1,36 @@
+{
+  "body": {
+    "api_version": "2025-03-31.basil",
+    "created": 1749668400,
+    "data": {
+      "object": {
+        "created": 1749668400,
+        "currency": "usd",
+        "email": "billing@davisyoungpropertygroup.com",
+        "id": "cus_O6Jp5HD0a080cp",
+        "livemode": true,
+        "metadata": {
+          "sf_account_id": "0015g0000r1YWJyAAO"
+        },
+        "name": "Davis & Young Property Group",
+        "object": "customer"
+      }
+    },
+    "id": "evt_pLxgnITS6TxVqo067IVQbYcw",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_7NbPe9hvLzxfE9",
+      "idempotency_key": "cd8468f64be1be89e38777835963359d"
+    },
+    "type": "customer.created"
+  },
+  "channel": "webhook",
+  "deliver_at": "2025-06-11T19:00:15Z",
+  "headers": {
+    "Stripe-Signature": "t=1749668415,kid=hearthline-stripe,v1=aa2279108f5502d1aa2d89d422b537ad60f659402399757609f6caf77d6da3a9"
+  },
+  "meta": {},
+  "source": "stripe"
+}

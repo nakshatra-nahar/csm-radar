@@ -1,0 +1,18 @@
+{
+  "body": {
+    "Email": "arjun.robinson@tallyworks.co.uk",
+    "Id": "0055g0000uLbRSXAA3",
+    "IsDeleted": false,
+    "ManagerId": "0055g0000LZuXSLAQ3",
+    "Name": "Arjun Robinson",
+    "SystemModstamp": "2023-10-16T06:00:00.000+0000",
+    "attributes": {
+      "type": "User"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2023-10-17T01:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

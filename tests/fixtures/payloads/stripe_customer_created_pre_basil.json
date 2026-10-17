@@ -1,0 +1,36 @@
+{
+  "body": {
+    "api_version": "2024-06-20",
+    "created": 1697436000,
+    "data": {
+      "object": {
+        "created": 1697436000,
+        "currency": "usd",
+        "email": "billing@lopezgonzalezrealtygroup.com",
+        "id": "cus_tcIvcBa2rgu9jL",
+        "livemode": true,
+        "metadata": {
+          "sf_account_id": "0015g0000pFroHtAAJ"
+        },
+        "name": "Lopez & Gonzalez Realty Group",
+        "object": "customer"
+      }
+    },
+    "id": "evt_UKop3w3ChfcNlXLlMUm177a1",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_Ozj0ZYY3zqI3FH",
+      "idempotency_key": "3e8ff656ebf6571ab8bfa7e3c7a89a14"
+    },
+    "type": "customer.created"
+  },
+  "channel": "webhook",
+  "deliver_at": "2023-10-16T06:00:01Z",
+  "headers": {
+    "Stripe-Signature": "t=1697436001,kid=hearthline-stripe,v1=25da0938184656dbf10c8963aa080a71713d6a912f6ad07694a51afdcce91a5e"
+  },
+  "meta": {},
+  "source": "stripe"
+}

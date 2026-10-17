@@ -1,0 +1,83 @@
+{
+  "body": {
+    "api_version": "2025-03-31.basil",
+    "created": 1749063600,
+    "data": {
+      "object": {
+        "cancel_at": null,
+        "cancel_at_period_end": false,
+        "canceled_at": null,
+        "cancellation_details": {
+          "reason": null
+        },
+        "created": 1717527600,
+        "customer": "cus_cE9XMHllbdGpHF",
+        "ended_at": null,
+        "id": "sub_7BoyZgNWMs7z2jx5k7ICwsuX",
+        "items": {
+          "data": [
+            {
+              "current_period_end": 1780599600,
+              "id": "si_7BoyZgNWMs7z2j",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_scale_yearly",
+                "object": "price",
+                "recurring": {
+                  "interval": "year",
+                  "interval_count": 1
+                },
+                "unit_amount": 74700
+              },
+              "quantity": 15
+            }
+          ],
+          "object": "list"
+        },
+        "object": "subscription",
+        "start_date": 1717527600,
+        "status": "active"
+      },
+      "previous_attributes": {
+        "items": {
+          "data": [
+            {
+              "current_period_end": 1749063600,
+              "id": "si_7BoyZgNWMs7z2j",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_scale_yearly",
+                "object": "price",
+                "recurring": {
+                  "interval": "year",
+                  "interval_count": 1
+                },
+                "unit_amount": 74700
+              },
+              "quantity": 15
+            }
+          ],
+          "object": "list"
+        }
+      }
+    },
+    "id": "evt_04EzhT9ciLT19Fwfn5PDKmwr",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "type": "customer.subscription.updated"
+  },
+  "channel": "webhook",
+  "deliver_at": "2025-06-04T19:00:17Z",
+  "headers": {
+    "Stripe-Signature": "t=1749063617,kid=hearthline-stripe,v1=0fbf5742ebd0ab9251f6d1bfcd331958b87144be35d1c13d766bc8cea24c9105"
+  },
+  "meta": {},
+  "source": "stripe"
+}

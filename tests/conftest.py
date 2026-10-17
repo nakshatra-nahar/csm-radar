@@ -1,5 +1,6 @@
 import os
 import uuid
+from contextlib import contextmanager
 
 import psycopg
 import pytest
@@ -7,8 +8,10 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
 from radar.db import Database
 from radar.migrate import migrate
+from radar.sim import generate, staff
 from radar.tenants import TENANTS, runtime_config, tenant_id
 
 ADMIN_DSN = os.environ.get(
@@ -18,8 +21,9 @@ WEB_PASSWORD = os.environ.get("RADAR_WEB_PASSWORD", "radar_web_test")
 WORKER_PASSWORD = os.environ.get("RADAR_WORKER_PASSWORD", "radar_worker_test")
 
 
-@pytest.fixture(scope="session")
-def owner_dsn():
+@contextmanager
+def fresh_database():
+    """A new, migrated database (owner DSN), dropped afterwards."""
     name = f"radar_test_{uuid.uuid4().hex[:8]}"
     with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
         admin.execute(f"CREATE DATABASE {name}")
@@ -30,6 +34,12 @@ def owner_dsn():
     finally:
         with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
             admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+
+
+@pytest.fixture(scope="session")
+def owner_dsn():
+    with fresh_database() as dsn:
+        yield dsn
 
 
 def _role_dsn(owner_dsn: str, role: str, password: str) -> str:
@@ -95,3 +105,51 @@ def two_tenants_seeded(owner_conn):
         )
         out[key], out[f"{key}_account"] = tid, account
     return out
+
+
+@pytest.fixture
+def tenant(owner_conn):
+    """A fresh tenant with hearthline's config (internal domain hearthline.io) and staff.
+
+    Returns (tenant_id, slug). Stripe test records are signed with the slug's demo secret.
+    """
+    slug, tid = f"t{uuid.uuid4().hex[:10]}", uuid.uuid4()
+    spec = TENANTS["hearthline"]
+    owner_conn.execute(
+        "INSERT INTO tenants (id, slug, name, timezone, currency, internal_domain, config)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (tid, slug, slug, spec.timezone, spec.currency, spec.internal_domain,
+         Jsonb(runtime_config("hearthline"))),
+    )
+    for user in staff("hearthline"):
+        owner_conn.execute(
+            "INSERT INTO users (tenant_id, email, name, role, sf_user_id)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (tid, user["email"], user["name"], user["role"], user["sf_user_id"]),
+        )
+    return tid, slug
+
+
+@pytest.fixture(scope="session")
+def small_world_dir(tmp_path_factory):
+    """A scale-0.1 world (all three tenants), generated once per session."""
+    out = tmp_path_factory.mktemp("small_world")
+    generate(out, scale=0.1)
+    return out
+
+
+@pytest.fixture(scope="session")
+def small_world_db(small_world_dir):
+    """A fresh database with the small world seeded and replayed up to history_end.
+
+    Yields {"owner_dsn", "db" (radar_worker Database), "data_dir", "stats" {slug: IngestStats}}.
+    """
+    with fresh_database() as dsn:
+        db = Database(_role_dsn(dsn, "radar_worker", WORKER_PASSWORD))
+        try:
+            slugs = list(TENANTS)
+            seed_tenants_and_users(dsn, db, slugs)
+            stats = {s: replay_feed(db, tenant_id(s), small_world_dir, HISTORY_END) for s in slugs}
+            yield {"owner_dsn": dsn, "db": db, "data_dir": small_world_dir, "stats": stats}
+        finally:
+            db.close()

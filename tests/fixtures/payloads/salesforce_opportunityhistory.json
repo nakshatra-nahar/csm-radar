@@ -1,0 +1,18 @@
+{
+  "body": {
+    "CreatedDate": "2023-10-26T10:07:48.000+0000",
+    "Id": "0085g0000TCX0CsAQL",
+    "IsDeleted": false,
+    "OpportunityId": "0065g0000NPFWCqAQP",
+    "StageName": "Closed Won",
+    "SystemModstamp": "2023-10-26T10:07:48.000+0000",
+    "attributes": {
+      "type": "OpportunityHistory"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2023-10-27T01:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

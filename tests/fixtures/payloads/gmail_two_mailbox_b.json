@@ -1,0 +1,50 @@
+{
+  "body": {
+    "id": "4a0dfb31bb86c5a7",
+    "internalDate": "1734128710012",
+    "labelIds": [
+      "INBOX"
+    ],
+    "payload": {
+      "headers": [
+        {
+          "name": "From",
+          "value": "Mary Adams <mary.adams@hearthline.io>"
+        },
+        {
+          "name": "To",
+          "value": "michael.walker@meadowrealtygroup.com"
+        },
+        {
+          "name": "Cc",
+          "value": "betty.patel@hearthline.io"
+        },
+        {
+          "name": "Date",
+          "value": "Fri, 13 Dec 2024 17:25:10 -0500"
+        },
+        {
+          "name": "Subject",
+          "value": "Training session follow-up"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<szPAkDKxDVPW4teRvHLW@mail.gmail.com>"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"b1\""
+        }
+      ],
+      "mimeType": "multipart/alternative"
+    },
+    "threadId": "4a0dfb31bb86c5a7"
+  },
+  "channel": "sync",
+  "deliver_at": "2024-12-13T22:30:20Z",
+  "headers": {},
+  "meta": {
+    "mailbox": "betty.patel@hearthline.io"
+  },
+  "source": "gmail"
+}

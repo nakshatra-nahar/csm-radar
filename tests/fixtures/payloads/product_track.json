@@ -1,0 +1,23 @@
+{
+  "body": {
+    "context": {
+      "groupId": "ws_4d70d7b4e97e"
+    },
+    "event": "Workspace Went Live",
+    "messageId": "msg_WfpX5GBikUUXowqKvTiMWUJS",
+    "originalTimestamp": "2024-04-15T15:16:29.262Z",
+    "properties": {
+      "days_since_contract": -4
+    },
+    "receivedAt": "2024-04-15T15:16:29.534Z",
+    "sentAt": "2024-04-15T15:16:29.381Z",
+    "timestamp": "2024-04-15T15:16:29.416Z",
+    "type": "track",
+    "userId": "usr_K1mQ50vZdS"
+  },
+  "channel": "webhook",
+  "deliver_at": "2024-04-15T15:17:41Z",
+  "headers": {},
+  "meta": {},
+  "source": "product"
+}

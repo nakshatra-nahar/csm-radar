@@ -1,0 +1,29 @@
+{
+  "body": {
+    "computed_at": "2025-09-03T02:30:00Z",
+    "metrics": {
+      "active_contacts": 1019,
+      "active_users": 3,
+      "automations_active": 3,
+      "dashboard_views": 78,
+      "email_opens": 174,
+      "emails_delivered": 573,
+      "emails_sent": 582,
+      "felix_calls_made": 91,
+      "felix_handoffs": 3,
+      "form_submissions": 5,
+      "signal_intent_high": 68.6
+    },
+    "period_end": "2025-08-31",
+    "period_start": "2025-08-01",
+    "schema": "usage_summary.v2",
+    "sf_account_id": "0015g0000PCgWJTAQ3",
+    "version": 1,
+    "workspace_id": "ws_5f37b586fb53"
+  },
+  "channel": "batch",
+  "deliver_at": "2025-09-03T03:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "product"
+}

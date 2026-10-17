@@ -1,0 +1,25 @@
+{
+  "body": {
+    "ARR__c": 1152.0,
+    "CSM__c": "0055g0000UGplSOAQZ",
+    "Id": "0015g0000ZjQDizAQG",
+    "IsDeleted": false,
+    "Is_Test__c": false,
+    "MasterRecordId": null,
+    "Name": "Golden Joinery",
+    "OwnerId": "0055g000008svSZAAY",
+    "Renewal_Date__c": null,
+    "Segment__c": "Small",
+    "SystemModstamp": "2023-10-16T06:00:00.000+0000",
+    "Type": "Former Customer",
+    "Website": "https://www.goldenjoinery.co.uk",
+    "attributes": {
+      "type": "Account"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2023-10-17T01:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

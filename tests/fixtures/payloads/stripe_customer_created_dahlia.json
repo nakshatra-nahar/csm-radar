@@ -1,0 +1,36 @@
+{
+  "body": {
+    "api_version": "2026-03-25.dahlia",
+    "created": 1769932800,
+    "data": {
+      "object": {
+        "created": 1769932800,
+        "currency": "usd",
+        "email": "billing@campbelldata.io",
+        "id": "cus_TLkskGW96yhrki",
+        "livemode": true,
+        "metadata": {
+          "sf_account_id": "0015g0000yCyVBLAA3"
+        },
+        "name": "Campbell Data",
+        "object": "customer"
+      }
+    },
+    "id": "evt_bxoz16eZfdYNX2DEMDSNbyzg",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": "req_2rUVDZj4Xk4Wcy",
+      "idempotency_key": "1956da861dc960f6035deeeb1c3d250a"
+    },
+    "type": "customer.created"
+  },
+  "channel": "webhook",
+  "deliver_at": "2026-02-01T08:00:02Z",
+  "headers": {
+    "Stripe-Signature": "t=1769932802,kid=kitewire-stripe,v1=49b5d2bf0f859f4716706078d60348eaa5e0a2701d287260502b34bf09e42d3b"
+  },
+  "meta": {},
+  "source": "stripe"
+}

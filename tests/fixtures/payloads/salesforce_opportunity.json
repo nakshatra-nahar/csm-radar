@@ -1,0 +1,23 @@
+{
+  "body": {
+    "AccountId": "0015g0000AoBxiVAQS",
+    "Amount": 3346.56,
+    "CloseDate": "2023-05-16",
+    "Id": "0065g0000S1PCBUAQ4",
+    "IsClosed": true,
+    "IsDeleted": false,
+    "IsWon": true,
+    "Loss_Reason__c": null,
+    "StageName": "Closed Won",
+    "SystemModstamp": "2023-10-16T06:00:00.000+0000",
+    "Type": "Renewal",
+    "attributes": {
+      "type": "Opportunity"
+    }
+  },
+  "channel": "batch",
+  "deliver_at": "2023-10-17T01:00:00Z",
+  "headers": {},
+  "meta": {},
+  "source": "salesforce"
+}

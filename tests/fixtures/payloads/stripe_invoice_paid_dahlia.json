@@ -1,0 +1,53 @@
+{
+  "body": {
+    "api_version": "2026-03-25.dahlia",
+    "created": 1770508800,
+    "data": {
+      "object": {
+        "amount_due": 10000,
+        "amount_paid": 10000,
+        "attempt_count": 1,
+        "billing_reason": "subscription_cycle",
+        "currency": "usd",
+        "customer": "cus_1VVBDApyrjc5gj",
+        "id": "in_qusFU2mOZCuWsp2IscH3fuiY",
+        "lines": {
+          "data": [
+            {
+              "period": {
+                "end": 1772924400,
+                "start": 1770505200
+              }
+            }
+          ],
+          "object": "list"
+        },
+        "next_payment_attempt": null,
+        "object": "invoice",
+        "parent": {
+          "subscription_details": {
+            "subscription": "sub_HHL4157cK9MXzcQvOd1ucxAk"
+          },
+          "type": "subscription_details"
+        },
+        "status": "paid"
+      }
+    },
+    "id": "evt_5s33pBg9exlyjazAvywxnf0B",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "type": "invoice.paid"
+  },
+  "channel": "webhook",
+  "deliver_at": "2026-02-08T00:00:19Z",
+  "headers": {
+    "Stripe-Signature": "t=1770508819,kid=kitewire-stripe,v1=7b3ea8a50b71c7b06078f3d696a54568214509515b681bbf02a297f82b6d10ca"
+  },
+  "meta": {},
+  "source": "stripe"
+}

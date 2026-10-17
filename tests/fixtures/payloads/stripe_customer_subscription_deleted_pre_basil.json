@@ -1,0 +1,60 @@
+{
+  "body": {
+    "api_version": "2024-06-20",
+    "created": 1703534400,
+    "data": {
+      "object": {
+        "cancel_at": null,
+        "cancel_at_period_end": false,
+        "canceled_at": 1703534400,
+        "cancellation_details": {
+          "reason": "payment_failed"
+        },
+        "created": 1697436000,
+        "current_period_end": 1705003200,
+        "customer": "cus_xKpH7LcNYU7QeS",
+        "ended_at": 1703534400,
+        "id": "sub_r5fD0XicPfiOCIpw5Di8SbzJ",
+        "items": {
+          "data": [
+            {
+              "id": "si_r5fD0XicPfiOCI",
+              "object": "subscription_item",
+              "price": {
+                "currency": "usd",
+                "id": "price_scale_monthly",
+                "object": "price",
+                "recurring": {
+                  "interval": "month",
+                  "interval_count": 1
+                },
+                "unit_amount": 7500
+              },
+              "quantity": 6
+            }
+          ],
+          "object": "list"
+        },
+        "object": "subscription",
+        "start_date": 1676145600,
+        "status": "canceled"
+      }
+    },
+    "id": "evt_ALmQ4atdGyVZRCqoHZgwjJ2n",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "type": "customer.subscription.deleted"
+  },
+  "channel": "webhook",
+  "deliver_at": "2023-12-25T20:00:16Z",
+  "headers": {
+    "Stripe-Signature": "t=1703534416,kid=hearthline-stripe,v1=8b14e5b4d8a6922515c4310683f84393a0b96fe0f004bd0381800edd5877ccd3"
+  },
+  "meta": {},
+  "source": "stripe"
+}

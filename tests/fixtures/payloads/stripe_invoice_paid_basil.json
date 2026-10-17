@@ -1,0 +1,53 @@
+{
+  "body": {
+    "api_version": "2025-03-31.basil",
+    "created": 1748808000,
+    "data": {
+      "object": {
+        "amount_due": 37500,
+        "amount_paid": 37500,
+        "attempt_count": 1,
+        "billing_reason": "subscription_cycle",
+        "currency": "usd",
+        "customer": "cus_hPnJeLO8GaxI1T",
+        "id": "in_ghklThuhoHPf1AIp5o2NgLYm",
+        "lines": {
+          "data": [
+            {
+              "period": {
+                "end": 1751396400,
+                "start": 1748804400
+              }
+            }
+          ],
+          "object": "list"
+        },
+        "next_payment_attempt": null,
+        "object": "invoice",
+        "parent": {
+          "subscription_details": {
+            "subscription": "sub_AcBAmvXi5g7UDEJwB0yay7RN"
+          },
+          "type": "subscription_details"
+        },
+        "status": "paid"
+      }
+    },
+    "id": "evt_wiogC133N40T1vvxLPNbhQBm",
+    "livemode": true,
+    "object": "event",
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "type": "invoice.paid"
+  },
+  "channel": "webhook",
+  "deliver_at": "2025-06-01T20:00:26Z",
+  "headers": {
+    "Stripe-Signature": "t=1748808026,kid=hearthline-stripe,v1=e4dd70108ece0379dfb1ed5c5ef284f2094aa546c4242191254dd54c60ed196a"
+  },
+  "meta": {},
+  "source": "stripe"
+}
