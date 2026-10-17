@@ -1,3 +1,5 @@
+import uuid
+
 import psycopg
 import pytest
 
@@ -150,3 +152,51 @@ def test_audit_trigger_records_actor(web_db, two_tenants_seeded):
         ("user:test", "update", "cases"),
     ]
     assert rows[1]["before"]["outcome"] is None and rows[1]["after"]["outcome"] == "saved"
+
+
+def test_score_run_lifecycle_columns_updatable_rest_frozen(web_db, two_tenants_seeded):
+    with web_db.tenant_tx(two_tenants_seeded["a"]) as conn:
+        run_id = conn.execute(
+            "INSERT INTO score_runs (trigger, actionable, as_of, config_version)"
+            " VALUES ('manual', false, now(), 1) RETURNING id"
+        ).fetchone()["id"]
+        n = conn.execute(
+            "UPDATE score_runs SET status = 'done', finished_at = now(), n_scored = 0"
+            " WHERE id = %s",
+            (run_id,),
+        ).rowcount
+        assert n == 1
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with web_db.tenant_tx(two_tenants_seeded["a"]) as conn:
+            conn.execute("UPDATE score_runs SET as_of = now() WHERE id = %s", (run_id,))
+
+
+def test_tenant_tx_updates_only_its_own_tenant_row(web_db, two_tenants_seeded):
+    t = two_tenants_seeded
+    sql = "UPDATE tenants SET config_version = config_version WHERE id = %s"
+    with web_db.tenant_tx(t["a"]) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM tenants").fetchone()["n"] >= 2
+        assert conn.execute(sql, (t["a"],)).rowcount == 1
+        assert conn.execute(sql, (t["b"],)).rowcount == 0
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with web_db.tenant_tx(t["a"]) as conn:
+            conn.execute(
+                "INSERT INTO tenants (id, slug, name, timezone, currency, internal_domain, config)"
+                " VALUES (gen_random_uuid(), 'rogue', 'x', 'UTC', 'USD', 'x', '{}')"
+            )
+
+
+def test_enqueue_on_conflict_clause_coalesces_tenant_and_system_jobs(
+    worker_db, two_tenants_seeded
+):
+    # The exact clause Task 8's enqueue uses (design Appendix A): it must name the index predicate.
+    sql = (
+        "INSERT INTO jobs (tenant_id, kind, dedupe_key) VALUES (%s, 'probe', %s)"
+        " ON CONFLICT (tenant_id, dedupe_key) WHERE status = 'queued' AND dedupe_key IS NOT NULL"
+        " DO NOTHING RETURNING id"
+    )
+    key = f"probe:{uuid.uuid4()}"
+    with worker_db.system_tx() as conn:
+        for tid in (two_tenants_seeded["a"], None):
+            assert conn.execute(sql, (tid, key)).fetchone() is not None
+            assert conn.execute(sql, (tid, key)).fetchone() is None

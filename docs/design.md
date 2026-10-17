@@ -205,8 +205,8 @@ When an SF account or contact arrives, quarantined items for that tenant are ret
 - `jobs` and `schedule_runs` are system tables holding ids only. `radar_worker` has a policy that sees every tenant's jobs; `radar_web` sees only its own tenant's.
 - All tenant work goes through `tenant_tx(tenant_id, actor)`: a transaction whose first statement is `set_config('app.tenant_id', $1, true)` (and `app.actor`). No other code path gets a connection. Session `SET` is banned.
 - Views are `WITH (security_invoker = true)`. No materialized views and no `SECURITY DEFINER` functions over tenant data.
-- Append-only enforcement: the app roles get only `INSERT, SELECT` on `raw_records`, `events`, `identity_links`, `account_scores`, `score_runs`, `llm_calls` and `audit_log`.
-- `tenants` holds no customer data and has no RLS. The login page lists it.
+- Append-only enforcement: the app roles get only `INSERT, SELECT` on `raw_records`, `events`, `identity_links`, `account_scores`, `score_runs`, `llm_calls` and `audit_log`. One exception: `UPDATE (status, finished_at, n_scored)` on `score_runs`, so a run is inserted `running` and then marked `done` or `failed`.
+- `tenants` holds no customer data. The login page lists it, so its SELECT policy is `USING (true)`. Its UPDATE policy is `id = current tenant`, and the app roles may update only `config` and `config_version`. Only the owner (bootstrap) inserts tenants.
 
 ### 4.4 Indexes (tenant_id leads every one)
 
@@ -216,7 +216,7 @@ When an SF account or contact arrives, quarantined items for that tenant are ret
 - `identity_links (tenant_id, source, external_id, available_at DESC)`
 - `account_scores (tenant_id, account_id, as_of DESC)`
 - `jobs (lane, run_at, id) WHERE status = 'queued'`
-- `jobs (tenant_id, dedupe_key) UNIQUE WHERE status = 'queued'`
+- `jobs (tenant_id, dedupe_key) UNIQUE NULLS NOT DISTINCT WHERE status = 'queued' AND dedupe_key IS NOT NULL`
 - `cases (tenant_id, account_id, kind) UNIQUE WHERE status IN ('open','held')`
 
 Hot filter attributes are typed columns, not jsonb, because jsonb operators aren't leakproof and can't use indexes under RLS. `EXPLAIN` is checked as the app role, never as the superuser.
@@ -512,7 +512,7 @@ This will be measured on a 10x generated world and written into the README:
 Later tasks may add columns or tables only through new migration files (`005_*.sql`, ...); applied migrations are never edited. Every tenant table follows the RLS template in §4.3. "PK" means `PRIMARY KEY (tenant_id, id)` unless stated.
 
 001_core
-- `tenants(id uuid PK, slug text UNIQUE, name, timezone, currency, internal_domain, config jsonb, config_version int DEFAULT 1, created_at)`; no RLS, no customer data.
+- `tenants(id uuid PK, slug text UNIQUE, name, timezone, currency, internal_domain, config jsonb, config_version int DEFAULT 1, created_at)`; no customer data; RLS: everyone reads, a tenant updates only its own row (`config`, `config_version`), only the owner inserts.
 - `users(tenant_id, id uuid DEFAULT gen_random_uuid(), email, name, role CHECK (csm|manager|admin), manager_id uuid NULL, sf_user_id text NULL, active bool DEFAULT true)`; PK; UNIQUE(tenant_id, email); FK (tenant_id, manager_id) → users.
 - `raw_records(tenant_id, id bigint IDENTITY, source, source_record_id, payload jsonb, payload_hash text, channel text, headers jsonb, meta jsonb, occurred_at timestamptz NULL, available_at timestamptz NOT NULL, ingested_at timestamptz DEFAULT now())`; PK; UNIQUE(tenant_id, source, source_record_id).
 - `events(tenant_id, id bigint IDENTITY, raw_record_id bigint, source, type, entity_id, account_ref text NULL, occurred_at, available_at, ingested_at DEFAULT now(), version_key text NOT NULL, status text, priority text, amount_minor bigint, quantity int, attrs jsonb NOT NULL DEFAULT '{}')`; PK; FK (tenant_id, raw_record_id) → raw_records.
@@ -529,7 +529,7 @@ Later tasks may add columns or tables only through new migration files (`005_*.s
 - `VIEW latest_scores WITH (security_invoker = true)`: rows of the latest `done` + `actionable` run per tenant.
 
 003_agent
-- `jobs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, payload jsonb, dedupe_key NULL, lane smallint DEFAULT 0, run_at DEFAULT now(), status CHECK (queued|running|done|dead) DEFAULT 'queued', attempts int DEFAULT 0, max_attempts int DEFAULT 5, lease_expires_at NULL, last_error NULL, created_at, finished_at NULL)`; UNIQUE (tenant_id, dedupe_key) WHERE status = 'queued'; index (lane, run_at, id) WHERE status = 'queued'. Policies: `radar_web` sees `tenant_id = current tenant`; `radar_worker` sees all.
+- `jobs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, payload jsonb, dedupe_key NULL, lane smallint DEFAULT 0, run_at DEFAULT now(), status CHECK (queued|running|done|dead) DEFAULT 'queued', attempts int DEFAULT 0, max_attempts int DEFAULT 5, lease_expires_at NULL, last_error NULL, created_at, finished_at NULL)`; UNIQUE (tenant_id, dedupe_key) NULLS NOT DISTINCT WHERE status = 'queued' AND dedupe_key IS NOT NULL (so system jobs with NULL tenant coalesce too; `ON CONFLICT` must repeat this exact predicate); index (lane, run_at, id) WHERE status = 'queued'. Policies: `radar_web` sees `tenant_id = current tenant`; `radar_worker` sees all.
 - `schedule_runs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, period_key, created_at)`; UNIQUE NULLS NOT DISTINCT (tenant_id, kind, period_key); worker-only.
 - `cases(tenant_id, id uuid, account_id, kind, status CHECK (open|held|done|dismissed|snoozed|auto_closed), play, opened_at, opened_by text, owner_user_id NULL, sla_due_at NULL, escalated_at NULL, evidence_event_ids bigint[] DEFAULT '{}', outcome NULL, outcome_reason NULL, closed_at NULL, closed_by uuid NULL)`; PK; UNIQUE (tenant_id, account_id, kind) WHERE status IN ('open','held').
 - `suppressions(tenant_id, id uuid, account_id, created_by uuid, reason, p_at_dismiss double NULL, created_at, lifted_at NULL, lifted_reason NULL)`; PK.

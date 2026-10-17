@@ -39,8 +39,22 @@ GRANT SELECT, INSERT ON
     raw_records, events, identity_links, score_runs, account_scores, llm_calls, audit_log
     TO radar_web, radar_worker;
 
+-- A run is inserted 'running' (account_scores rows need it to exist) and then finished;
+-- only its lifecycle columns may change.
+GRANT UPDATE (status, finished_at, n_scored) ON score_runs TO radar_web, radar_worker;
+
+-- tenants has no tenant_id, so the loop above skips it. Anyone may list tenants (login page);
+-- a tenant_tx may change only its own config; only the owner (bootstrap) inserts tenants.
+-- Not FORCEd, so the owner is unaffected.
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenants_read ON tenants FOR SELECT USING (true);
+CREATE POLICY tenants_update_own ON tenants FOR UPDATE
+    USING (id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+GRANT SELECT, UPDATE (config, config_version) ON tenants TO radar_web, radar_worker;
+
 GRANT SELECT, INSERT, UPDATE ON
-    tenants, users, quarantine, accounts, contacts, source_status, models, jobs, cases,
+    users, quarantine, accounts, contacts, source_status, models, jobs, cases,
     suppressions, worklists, worklist_items, briefs, outbox, incidents
     TO radar_web, radar_worker;
 GRANT SELECT, INSERT, UPDATE ON schedule_runs TO radar_worker;
