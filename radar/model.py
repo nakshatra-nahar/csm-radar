@@ -27,7 +27,9 @@ def fit(df: pd.DataFrame, features: list[str] = FEATURE_NAMES, C: float = 1.0) -
         "impute": impute.tolist(), "mean": impute.tolist(), "scale": scale.tolist(),
         "coef": lr.coef_[0].tolist(), "intercept": float(lr.intercept_[0]),
         "platt": None,  # set only if calibration needs it (design §6)
-        "n_train": len(df), "n_decisions": int(df["label"].sum()),
+        # one decision per account, so decisions = accounts with a positive row (design §6 gate)
+        "n_train": len(df),
+        "n_decisions": df.index.get_level_values("account_id")[df["label"] == 1].nunique(),
         "trained_at": clock.now().isoformat(), "label_version": LABEL_VERSION}
 
 
