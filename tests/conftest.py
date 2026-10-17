@@ -8,7 +8,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
+from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users, train_and_promote
 from radar.db import Database
 from radar.migrate import migrate
 from radar.sim import generate, staff
@@ -153,3 +153,17 @@ def small_world_db(small_world_dir):
             yield {"owner_dsn": dsn, "db": db, "data_dir": small_world_dir, "stats": stats}
         finally:
             db.close()
+
+
+@pytest.fixture(scope="session")
+def trained_world_db(small_world_db):
+    """small_world_db plus a model trained and promoted per tenant as of history_end.
+
+    The small world has ~33 matured decisions per tenant, under the default gate of 100, so
+    each tenant's config gate is lowered to 20 first. Adds "models" {slug: model id | None}.
+    """
+    with psycopg.connect(small_world_db["owner_dsn"], autocommit=True) as conn:
+        conn.execute("UPDATE tenants SET config = jsonb_set(config, '{model,min_decisions}', '20')")
+    db = small_world_db["db"]
+    return small_world_db | {"models": {s: train_and_promote(db, tenant_id(s), HISTORY_END)
+                                        for s in TENANTS}}

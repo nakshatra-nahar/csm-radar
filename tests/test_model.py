@@ -12,6 +12,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from radar import model
+from radar.bootstrap import _platt
 from radar.registry import FEATURE_NAMES, FEATURES, manifest
 
 
@@ -68,3 +69,35 @@ def test_check_signs_flags_wrong_direction(train):
     assert model.check_signs(artifact | {"coef": list(right.values())}) == []
     wrong = right | {"usage_drop": -0.5, "log_arr": -3.0}  # log_arr is structural: no gate
     assert model.check_signs(artifact | {"coef": list(wrong.values())}) == ["usage_drop"]
+
+
+def test_platt_none_leaves_predictions_unchanged(train):
+    artifact = model.fit(train)
+    p, contrib = model.predict(artifact, train)
+    assert model.intercept(artifact) == artifact["intercept"]
+    raw = artifact["intercept"] + contrib.sum(axis=1)
+    np.testing.assert_array_equal(p, 1 / (1 + np.exp(-raw)))
+
+
+def test_platt_keeps_additivity_and_ranking(train):
+    plain = model.fit(train)
+    calibrated = plain | {"platt": {"a": -0.4, "b": 0.7}}
+    p0, _ = model.predict(plain, train)
+    p, contrib = model.predict(calibrated, train)
+    assert model.intercept(calibrated) == pytest.approx(-0.4 + 0.7 * plain["intercept"])
+    logit = np.log(p / (1 - p))
+    assert np.abs(model.intercept(calibrated) + contrib.sum(axis=1) - logit).max() < 1e-9
+    assert not np.allclose(p, p0)  # calibration moves the probabilities, not their order
+    np.testing.assert_array_equal(np.argsort(p, kind="stable"), np.argsort(p0, kind="stable"))
+
+
+def test_platt_fitted_only_for_a_miscalibrated_segment_with_enough_rows(train):
+    fitted = model.fit(train)
+    shifted = fitted | {"intercept": fitted["intercept"] + 1.5}  # overstates every p
+    rows = train.assign(billing_interval="year")  # last 8 weeks: 480 rows in one segment
+    platt, metrics = _platt(shifted, rows)
+    assert platt is not None and metrics["ece"]["year"]["ece"] > 0.02
+    assert metrics["ece_platt"]["year"]["ece"] < metrics["ece"]["year"]["ece"]
+    split = train.assign(billing_interval=np.where(train.index.get_level_values(
+        "account_id") % 2 == 0, "year", "month"))  # 240 rows each: too few to calibrate
+    assert _platt(shifted, split)[0] is None

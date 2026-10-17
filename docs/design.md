@@ -542,6 +542,9 @@ Later tasks may add columns or tables only through new migration files (`005_*.s
 - `incidents(tenant_id, id uuid, kind CHECK (circuit_breaker|source_stale|manifest_mismatch), source NULL, details jsonb, opened_at, acknowledged_by NULL, acknowledged_at NULL, closed_at NULL)`; PK.
 - `audit_log(tenant_id, id bigint IDENTITY, at DEFAULT now(), actor text ('agent'|'system'|'user:<uuid>'), action, entity_type, entity_id text, before jsonb NULL, after jsonb NULL, reason NULL)`; PK. Written by AFTER INSERT/UPDATE triggers on cases, outbox, suppressions, models, incidents (actor from `current_setting('app.actor', true)`), plus explicit inserts.
 
+006_open_incident_idx
+- `incidents`: UNIQUE (tenant_id, kind, source) NULLS NOT DISTINCT WHERE closed_at IS NULL, so each kind (and source) has at most one open incident; writers repeat this predicate in `ON CONFLICT ... DO NOTHING`.
+
 ## Appendix B: canonical event contract (ingestion produces, features consume)
 
 `account_ref` prefixes: `sf:`, `sf_opp:`, `stripe:`, `zd_org:`, `email:`, `ws:`. Identity methods: `sf_id`, `merge`, `sf_opportunity`, `stripe_metadata`, `zendesk_external_id`, `product_metadata`, `contact_email`, `domain`. Each tenant has an `internal_domain` (hearthline.io, tallyworks.co.uk, kitewire.dev) used to tell CSM addresses from customer addresses.

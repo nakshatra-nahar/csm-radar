@@ -33,14 +33,24 @@ def fit(df: pd.DataFrame, features: list[str] = FEATURE_NAMES, C: float = 1.0) -
         "trained_at": clock.now().isoformat(), "label_version": LABEL_VERSION}
 
 
+def intercept(artifact: dict) -> float:
+    """The intercept that, with predict's contributions, sums to logit(p)."""
+    platt = artifact["platt"]
+    return artifact["intercept"] if platt is None else (
+        platt["a"] + platt["b"] * artifact["intercept"])
+
+
 def predict(artifact: dict, X: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """(p, contributions) with contributions[i, j] = coef_j * z_ij, so intercept + row sum is
-    logit(p). shortcut: ignores platt, which fit never sets; apply it here once it does."""
+    """(p, contributions) with contributions[i, j] = coef_j * z_ij, so intercept(artifact) +
+    row sum is logit(p). With Platt (a, b > 0) the calibrated logit is a + b * logit: the
+    contributions scale by b, and the ranking is unchanged."""
     x = X[artifact["features"]].to_numpy(dtype=float)
     x = np.where(np.isnan(x), artifact["impute"], x)
     z = (x - np.asarray(artifact["mean"])) / np.asarray(artifact["scale"])
     contributions = z * np.asarray(artifact["coef"])
-    logit = artifact["intercept"] + contributions.sum(axis=1)
+    if artifact["platt"] is not None:
+        contributions = contributions * artifact["platt"]["b"]
+    logit = intercept(artifact) + contributions.sum(axis=1)
     return 1 / (1 + np.exp(-logit)), contributions
 
 
