@@ -111,7 +111,7 @@ def _stripe(body: dict, meta: dict) -> list[CanonicalEvent]:
                            "quantity": i["quantity"]} for i in items],
                 "cancel_at_period_end": obj["cancel_at_period_end"],
                 "cancel_at": obj["cancel_at"], "canceled_at": obj["canceled_at"],
-                "ended_at": obj["ended_at"],
+                "ended_at": obj["ended_at"], "start_date": obj["start_date"],  # contract start
                 "cancellation_reason": (obj.get("cancellation_details") or {}).get("reason"),
                 "current_period_end": max(e for e in ends if e is not None)})]
     version = f"{created:010d}:{evt}"

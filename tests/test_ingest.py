@@ -40,6 +40,7 @@ def test_golden_payloads_normalize(path):
     a = ev.attrs
     if ev.type == "billing.subscription":  # top-level before basil, on the item from basil on
         assert a["current_period_end"] >= rec["body"]["created"] and ev.quantity > 0
+        assert a["start_date"] == rec["body"]["data"]["object"]["start_date"]  # contract start
     if ev.type == "billing.invoice":
         assert a["subscription_id"].startswith("sub_") and ev.amount_minor > 0
         assert a["paid"] is (rec["body"]["type"] == "invoice.paid")
