@@ -1,0 +1,116 @@
+"""Every generator knob in one dict (design §3.2). The README's generator table prints from it.
+
+Rates are annual unless named `_weekly` or `_monthly`. Health effects are level offsets on h.
+"""
+
+from datetime import date
+
+PARAMS: dict = {
+    "sim_start": date(2022, 2, 28),  # a Monday; weeks run Monday to Sunday
+    # account start dates are uniform over this window (per tenant)
+    "start_window": {
+        "hearthline": (date(2022, 3, 1), date(2026, 12, 1)),
+        "tallyworks": (date(2022, 3, 1), date(2026, 12, 1)),
+        "kitewire": (date(2025, 11, 1), date(2026, 11, 15)),
+    },
+    # seats ~ lognormal(median, sigma) clipped; plans are (name, max seats, monthly minor units
+    # per seat); segments are (name, max seats). shortcut: one per-seat price item, no add-ons.
+    "accounts": {
+        "hearthline": {"seats": (6, 0.7, 2, 120), "domain": ".com",
+                       "plans": [("growth", 5, 12500), ("scale", 20, 7500),
+                                 ("enterprise", 9999, 6000)],
+                       "segments": [("Small Team", 5), ("Medium Team", 10), ("Large Team", 20),
+                                    ("Mega Team", 50), ("Enterprise Team", 9999)]},
+        "tallyworks": {"seats": (3, 0.6, 1, 40), "domain": ".co.uk",
+                       "plans": [("starter", 2, 1800), ("standard", 6, 3200),
+                                 ("premium", 9999, 4800)],
+                       "segments": [("Micro", 2), ("Small", 10), ("Medium", 9999)]},
+        "kitewire": {"seats": (12, 0.9, 3, 400), "domain": ".io",
+                     "plans": [("team", 20, 2500), ("business", 100, 3500),
+                               ("enterprise", 9999, 4500)],
+                     "segments": [("SMB", 20), ("Mid-Market", 100), ("Enterprise", 9999)]},
+    },
+    "annual_discount": 0.83,  # yearly price = 12 * monthly * this
+    "latent": {"phi": 0.92, "sigma": 0.25, "mu_mean": 0.3, "mu_sd": 0.6},
+    "onboarding": {"ramp_weeks": 8, "start_offset": -1.2, "fail_rate": 0.15,
+                   "fail_offset": -1.0, "fail_weeks": 26},
+    # shock: annual rate and health effect (see world._shock_profile for the shape)
+    "shocks": {
+        # SF learns of the departure in sf_mark_share of cases, sf_lag_weeks later;
+        # a successor champion appears successor_weeks later
+        "champion_departure": {"rate": 0.15, "effect": -0.8, "weeks": 12, "sf_mark_share": 0.6,
+                               "sf_lag_weeks": (3, 12), "successor_weeks": (2, 10)},
+        "integration_break": {"rate": 0.10, "effect": -0.5, "repair_share": 0.6,
+                              "repair_mean_weeks": 4, "ticket_share": 0.5},
+        "budget_cut": {"rate": 0.06, "effect": -0.4, "weeks": 26, "seat_cut": 0.3},
+        "competitor_eval": {"rate": 0.05, "drift": -0.05, "weeks": 10, "recover_weeks": 12},
+        "bug_episode": {"rate": 0.10, "effect": -0.3, "weeks": 4, "resolved_share": 0.4},
+        "expansion": {"rate": 0.08, "effect": 0.4, "weeks": 26, "seat_add": 0.3},
+    },
+    "outage": {"hearthline": date(2025, 11, 10), "tallyworks": date(2026, 3, 2),
+               "account_share": 0.3, "effect": -0.15},
+    # FRED HSN1FNSA monthly index (Jan..Dec), applied to hearthline engagement usage only
+    "seasonality": [0.89, 1.02, 1.17, 1.15, 1.11, 1.09, 1.02, 0.95, 0.93, 0.94, 0.89, 0.85],
+    # churn link: P(churn at renewal) = sigmoid(alpha + beta * mean h over prior 8 weeks);
+    # month-to-month weekly hazard = sigmoid(alpha + beta * h_t)
+    "churn": {
+        "hearthline": {"annual": (-2.9, -2.8), "monthly_on_contract": (-2.9, -2.8)},
+        "tallyworks": {"annual": (-3.45, -2.8), "month_to_month": (-6.35, -2.0)},
+        "kitewire": {"annual": (-3.45, -2.8), "month_to_month": (-6.5, -2.0)},
+    },
+    "notice_days": (30, 75),
+    # annual rate of churn drawn independently of h (about 20% of voluntary churn)
+    "unforecastable": {"rate": {"hearthline": 0.026, "tallyworks": 0.04, "kitewire": 0.05},
+                       "causes": ["acquired", "business_closed", "team_dissolved",
+                                  "brokerage_switch"]},
+    # SF loss reasons (hearthline: Fello G2 complaint themes); a recent shock names the cause
+    "loss_reasons": {
+        "hearthline": ["data_accuracy", "price_roi", "lead_quality", "onboarding_training",
+                       "deliverability_10dlc", "feature_gap"],
+        "tallyworks": ["price", "missing_feature", "onboarding", "support_experience"],
+        "kitewire": ["price", "performance", "missing_feature", "support_experience"],
+    },
+    "shock_reasons": {
+        "hearthline": {"integration_break": "crm_sync", "competitor_eval": "competitor",
+                       "budget_cut": "team_downsized", "bug_episode": "product_bugs"},
+        "tallyworks": {"integration_break": "bank_feed_issues", "competitor_eval": "competitor",
+                       "budget_cut": "cost_cutting", "bug_episode": "product_bugs"},
+        "kitewire": {"integration_break": "integration_issues", "competitor_eval": "competitor",
+                     "budget_cut": "cost_cutting", "bug_episode": "product_bugs"},
+    },
+    "notice_modes": {"stripe_cancel": 0.7, "no_notice": 0.2, "cancellation_ticket": 0.1},
+    "cancel_at_share": 0.25,  # of Stripe cancels, use cancel_at instead of cancel_at_period_end
+    "save_share": 0.5,  # renewers schedule then reverse a cancel with prob save_share * p_churn
+    "loss_reason_noise": 0.25,  # SF loss reason differs from the true cause this often
+    "payments": {"fail_monthly": 0.015, "max_attempts": 8, "retry_days": 14, "recover": 0.6},
+    "telemetry_share": 0.82,
+    # hearthline: chance a shock also pauses the Felix Sales Agent (account-wide)
+    "sales_agent_pause": {"competitor_eval": 0.5, "budget_cut": 0.3},
+    "contacts_per_account": (1, 3),
+    "personal_email_share": 0.1,
+    "merge_share": 0.01,  # accounts that get a duplicate SF record, merged weeks later
+    "test_accounts": 3,
+    "tickets": {
+        "howto_weekly": 0.011, "howto_h": 0.5,  # rate * exp(howto_h * h)
+        "complaint_weekly": 0.008, "complaint_h": -0.7,  # rate * exp(complaint_h * h)
+        "silent_share": 0.4, "silent_factor": 0.3,  # silent accounts file fewer of both
+        "bug_burst": (2, 4), "reopen_share": 0.1, "csat_offered": 0.2,
+    },
+    "email": {"outbound_weekly": 0.05, "reply_base": 0.0, "reply_h": 1.2,
+              "inbound_weekly": 0.01, "auto_reply": 0.03, "manager_cc": 0.05,
+              "soft_bounce": 0.004, "policy_reject": 0.002, "suppress_days": 60},
+    # monthly usage: value = seats * per_seat * utilisation * noise (* seasonality if listed);
+    # utilisation = lo + (hi - lo) * sigmoid(slope * mean h of the month)
+    "usage": {
+        "utilisation": (0.2, 0.95), "slope": 1.5, "noise_sd": 0.2,
+        "per_seat": {
+            "hearthline": {"active_contacts": 450, "emails_sent": 250, "dashboard_views": 30,
+                           "form_submissions": 2, "automations_active": 0.8,
+                           "felix_calls_made": 40},
+            "tallyworks": {"invoices_created": 20, "bank_transactions_reconciled": 80,
+                           "reports_run": 5},
+            "kitewire": {"builds_run": 60, "deploys": 8, "api_calls": 3000},
+        },
+        "seasonal": ["emails_sent", "dashboard_views", "form_submissions", "felix_calls_made"],
+    },
+}
