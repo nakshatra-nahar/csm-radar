@@ -30,12 +30,14 @@ def verify(header: str, body: bytes, secrets: dict[str, str], now: int,
     """Return the key id that signed `body`, or raise WebhookError."""
     try:
         parts = dict(item.split("=", 1) for item in header.split(","))
-        t, kid, mac = int(parts["t"]), parts["kid"], parts["v1"]
+        # bytes: compare_digest raises TypeError on non-ASCII str; a lone surrogate raises
+        # UnicodeEncodeError, a ValueError
+        t, kid, mac = int(parts["t"]), parts["kid"], parts["v1"].encode()
     except (KeyError, ValueError) as e:
         raise WebhookError("malformed signature header") from e
     if kid not in secrets:
         raise WebhookError(f"unknown key id {kid!r}")
-    if not hmac.compare_digest(mac, _mac(secrets[kid], body, t)):
+    if not hmac.compare_digest(mac, _mac(secrets[kid], body, t).encode()):
         raise WebhookError("signature mismatch")
     if abs(now - t) > tolerance:  # a replayed old delivery, or a badly skewed sender
         raise WebhookError("timestamp outside tolerance")

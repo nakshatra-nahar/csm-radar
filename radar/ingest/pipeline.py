@@ -141,7 +141,8 @@ class _Run:
         identity.quarantine(self.conn, raw_id, rec.source, ref, reason, rec.at, details or {})
 
     def land(self, recs: list[_Record]) -> list[tuple[_Record, int]]:
-        """Insert unseen records; count duplicates; quarantine same-id, different-body resends."""
+        """Insert unseen, validly signed records; count duplicates; quarantine bad signatures
+        (never landed) and same-id, different-body resends."""
         keys = {(r.source, r.srid) for r in recs}
         existing = {(r["source"], r["source_record_id"]): (r["id"], r["payload_hash"])
                     for r in self.conn.execute(
@@ -153,6 +154,11 @@ class _Run:
         for r in recs:
             self.bump(r.source, "received")
             self.last_at[r.source] = max(r.at, self.last_at.get(r.source, r.at))
+            # before landing: a stale or forged copy must not claim the id the real one needs
+            if r.source == "stripe" and not self.signed(r):
+                self.quarantine(r, None, "bad_signature",
+                                details={"payload": r.body, "headers": r.headers})
+                continue
             prior = seen.get((r.source, r.srid)) or existing.get((r.source, r.srid), (0, None))[1]
             if prior is None:
                 seen[(r.source, r.srid)] = r.digest
@@ -189,8 +195,6 @@ class _Run:
             self.retry()
         if rec.error:
             return self.quarantine(rec, raw_id, rec.error)
-        if rec.source == "stripe" and not self.signed(rec):
-            return self.quarantine(rec, raw_id, "bad_signature")
         for ev in rec.events:
             if ev.occurred_at > rec.at:  # known before it happened: a bad device clock
                 self.bump(rec.source, "future_timestamps")

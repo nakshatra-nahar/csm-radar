@@ -196,7 +196,9 @@ def test_webhook_sign_verify_and_tolerance():
     assert webhooks.verify(header, body, secrets, now=1300) == "k1"
     bad = [(header, body, secrets, 1301), (header, body, secrets, 699),
            (header, body, {"k1": "other"}, 1000), (header, body, {}, 1000),
-           (header, b'{"a":2}', secrets, 1000), ("garbage", body, secrets, 1000)]
+           (header, b'{"a":2}', secrets, 1000), ("garbage", body, secrets, 1000),
+           ("t=1000,kid=k1,v1=é", body, secrets, 1000),
+           ("t=1000,kid=k1,v1=\ud800", body, secrets, 1000)]
     for args in bad:
         with pytest.raises(webhooks.WebhookError):
             webhooks.verify(*args)
@@ -215,6 +217,21 @@ def test_bad_signature_quarantined(worker_db, tenant):
     stats = ingest(worker_db, tid, foreign, stale)
     assert stats.quarantined == {"bad_signature": 2}
     assert rows(worker_db, tid, "SELECT id FROM events") == []
+
+
+def test_bad_signature_never_lands_so_valid_resend_applies(worker_db, tenant):
+    """A stale or forged delivery must not claim the evt id ahead of the genuine one."""
+    tid, slug = tenant
+    stale = at(stripe("stripe_invoice_paid_basil", slug, T0), T0 + timedelta(minutes=6))
+    assert ingest(worker_db, tid, stale).quarantined == {"bad_signature": 1}
+    [q] = rows(worker_db, tid, "SELECT raw_record_id, details FROM quarantine"
+               " WHERE reason = 'bad_signature'")
+    assert q["raw_record_id"] is None and q["details"]["payload"] == stale["body"]
+    assert rows(worker_db, tid, "SELECT id FROM raw_records") == []
+    resend = signed(at(stale, T0 + timedelta(minutes=7)), slug)
+    stats = ingest(worker_db, tid, resend)
+    assert (stats.accepted, stats.duplicates, stats.conflicts) == (1, 0, 0)
+    assert len(rows(worker_db, tid, "SELECT id FROM events")) == 1
 
 
 def test_live_path_uses_server_time(worker_db, tenant):
