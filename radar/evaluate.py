@@ -39,6 +39,7 @@ GROUPS = ["product", "zendesk", "gmail", "billing", "crm"]
 WEEK = pd.Timedelta(weeks=1)
 LATENCY = pd.Timedelta(days=97)  # the 90-day horizon plus 7 days of label latency (§7)
 BOOT = 1000
+C_GRID = (0.1, 10.0)  # §6: C stays 1.0; these refits are a sensitivity line, not tuning
 
 
 def load_truth(data_dir: Path, slug: str) -> dict[str, pd.DataFrame]:
@@ -61,14 +62,24 @@ def topk_by_book(df: pd.DataFrame, score_col: str, k: int) -> pd.Series:
     return _rank(df, df[score_col] * df["arr_minor"]) < k
 
 
-def _metrics(y: pd.Series, arr: pd.Series, w: pd.Series, score=None, prob=None) -> dict:
-    """w is each row's chance of being in the top-K (0/1, or K/N for random). Without a
-    score (random) AUC is 0.5 and PR-AUC the base rate; Brier needs a probability."""
+def _weekly_mean(num: pd.Series, den: pd.Series, week: pd.Series) -> float:
+    """sum(num) / sum(den) within each week (across all books), averaged over weeks; a week
+    with nothing to divide by (no churned ARR) is left out."""
+    g = pd.DataFrame({"n": num, "d": den, "week": week}).groupby("week")[["n", "d"]].sum()
+    g = g[g["d"] > 0]
+    return float((g["n"] / g["d"]).mean())
+
+
+def _metrics(y: pd.Series, arr: pd.Series, w: pd.Series, week: pd.Series, score=None,
+             prob=None) -> dict:
+    """w is each row's chance of being in the top-K (0/1, or K/N for random). Recall and
+    precision are weekly, averaged over test weeks (§7). Without a score (random) AUC is 0.5
+    and PR-AUC the base rate; Brier needs a probability."""
     hit = y * arr
-    precision = (y * w).sum() / w.sum()
+    precision = _weekly_mean(y * w, w, week)
     if score is not None:
         score = score.fillna(score.min() - 1)
-    return {"recall_at_k_arr": float((hit * w).sum() / hit.sum()),
+    return {"recall_at_k_arr": _weekly_mean(hit * w, hit, week),
             "precision_at_k": float(precision), "lift_at_k": float(precision / y.mean()),
             "roc_auc": 0.5 if score is None else float(roc_auc_score(y, score)),
             "pr_auc": float(y.mean() if score is None else average_precision_score(y, score)),
@@ -131,7 +142,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
             gbm=gbm.predict_proba(test[FEATURE_NAMES])[:, 1],
             hindsight=model.predict(hind_model, hind.reindex(test.index))[0],
             **{f"without_{g}": model.predict(model.fit(train, _without(g)), test)[0]
-               for g in GROUPS})
+               for g in GROUPS},
+            **{f"c_{c}": model.predict(model.fit(train, C=c), test)[0] for c in C_GRID})
         if truth is not None:
             test["oracle"] = _oracle_fit(train, test, frames.accounts, truth["weekly"])
         tests.append(test)
@@ -148,16 +160,20 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     t["w_renewal_sort"] = _rank(t, t["renewal"]) < k
     t["w_arr_sort"] = _rank(t, arr) < k
     scores = {"renewal_sort": t["renewal"], "arr_sort": arr}
-    for p in ("rules", "model", "oracle", "gbm", *(f"without_{g}" for g in GROUPS)):
+    for p in ("rules", "model", "oracle", "gbm", *(f"without_{g}" for g in GROUPS),
+              *(f"c_{c}" for c in C_GRID)):
         if p in t:
             t[f"w_{p}"] = topk_by_book(t, p, k)
             scores[p] = t[p]
-    policies = {p: _metrics(t["label"], arr, t[f"w_{p}"].astype(float), scores.get(p),
-                            t[p] if p in ("model", "oracle", "gbm") else None)
+    policies = {p: _metrics(t["label"], arr, t[f"w_{p}"].astype(float), t["as_of"],
+                            scores.get(p), t[p] if p in ("model", "oracle", "gbm") else None)
                 for p in POLICIES if f"w_{p}" in t}
     recall = policies["model"]["recall_at_k_arr"]
-    ablated = {g: _metrics(t["label"], arr, t[f"w_without_{g}"])["recall_at_k_arr"]
-               for g in GROUPS}
+
+    def recall_of(col: str) -> float:
+        return _metrics(t["label"], arr, t[f"w_{col}"], t["as_of"])["recall_at_k_arr"]
+
+    ablated = {g: recall_of(f"without_{g}") for g in GROUPS}
 
     train_all = label_rows(feats[as_of.isin(matured)], decisions)
     final = model.fit(train_all)
@@ -170,6 +186,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
         "hindsight_vs_pit": {"pit_auc": policies["model"]["roc_auc"],
                              "hindsight_auc": float(roc_auc_score(t["label"], t["hindsight"]))},
         "ablation": {g: {"recall_at_k_arr": a, "delta": a - recall} for g, a in ablated.items()},
+        "c_sensitivity": {str(c): recall if c == 1.0 else recall_of(f"c_{c}")
+                          for c in sorted((1.0, *C_GRID))},
         "outage_week": _outage(t, tenant["slug"]),
         "coef": dict(zip(final["features"], final["coef"], strict=True)),
         "signs": model.check_signs(final),
@@ -198,26 +216,39 @@ def _decisions(rows: pd.DataFrame) -> int:
 
 def _ci(t: pd.DataFrame, rng: np.random.Generator) -> dict:
     """Paired cluster bootstrap over accounts (an account's weeks move together): 95%
-    percentile intervals for each policy's recall and for model minus renewal_sort / rules."""
+    percentile intervals for each policy's weekly-mean recall and for model minus
+    renewal_sort / rules, the same statistic as the headline (_metrics)."""
     acct = pd.factorize(t["account_id"])[0]
-    n = acct.max() + 1
+    week = pd.factorize(t["as_of"])[0]
+    n, n_weeks = acct.max() + 1, week.max() + 1
     hit = (t["label"] * t["arr_minor"].astype(float)).to_numpy()
     counts = rng.multinomial(n, np.full(n, 1 / n), size=BOOT)  # resampled accounts
-    den = counts @ np.bincount(acct, hit, n)
-    recall = {p: counts @ np.bincount(acct, hit * t[f"w_{p}"].to_numpy(float), n) / den
-              for p in POLICIES if f"w_{p}" in t}
 
-    def interval(sample, point):
+    def by_account_week(values: np.ndarray) -> np.ndarray:
+        m = np.zeros((n, n_weeks))
+        np.add.at(m, (acct, week), values)
+        return m
+
+    den = by_account_week(hit)
+
+    def weekly_mean(num: np.ndarray, c: np.ndarray) -> np.ndarray:
+        d = c @ den
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.nanmean(np.where(d > 0, (c @ num) / d, np.nan), axis=-1)
+
+    nums = {p: by_account_week(hit * t[f"w_{p}"].to_numpy(float))
+            for p in POLICIES if f"w_{p}" in t}
+    recall = {p: weekly_mean(m, counts) for p, m in nums.items()}
+    point = {p: float(weekly_mean(m, np.ones(n))) for p, m in nums.items()}
+
+    def interval(sample, at):
         lo, hi = np.percentile(sample, [2.5, 97.5])
-        return {"diff": float(point), "lo": float(lo), "hi": float(hi)}
+        return {"diff": float(at), "lo": float(lo), "hi": float(hi)}
 
-    def point(p):
-        return float((hit * t[f"w_{p}"].to_numpy(float)).sum() / hit.sum())
-
-    out = {"recall": {p: interval(r, point(p)) for p, r in recall.items()}}
+    out = {"recall": {p: interval(r, point[p]) for p, r in recall.items()}}
     for vs in ("renewal_sort", "rules"):
         out[f"model_minus_{vs}"] = interval(recall["model"] - recall[vs],
-                                            point("model") - point(vs))
+                                            point["model"] - point[vs])
     return out
 
 
@@ -416,8 +447,8 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
         out.extend([f"## {title}", "", *lines, ""])
 
     section("Summary",
-            f"- Each week the model's top {k} per CSM held {_ci_text(model_recall)} of the ARR"
-            " that went on to churn within 90 days.",
+            f"- In an average test week the model's top {k} per CSM held"
+            f" {_ci_text(model_recall)} of the ARR that went on to churn within 90 days.",
             f"- Sorting by renewal date held {_pct(p['renewal_sort']['recall_at_k_arr'])}, the"
             f" rules heuristic {_pct(p['rules']['recall_at_k_arr'])} and random picks"
             f" {_pct(p['random']['recall_at_k_arr'])}.",
@@ -449,8 +480,9 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             f" {_pct(r['counts']['coverage']['gmail'])}; passing the coverage rule:"
             f" {_pct(r['counts']['coverage']['coverage_ok'])}.")
     section("Recall@K by policy",
-            "Recall is ARR-weighted and pooled over every test week and book. Lift is"
-            " precision over the base rate. Every policy ranks the same rows.", "",
+            "Recall (ARR-weighted) and precision are computed each week across every CSM's"
+            " book, then averaged over test weeks. Lift is precision over the base rate."
+            " Every policy ranks the same rows.", "",
             "| policy | recall@K (95% CI) | precision@K | lift | ROC-AUC | PR-AUC | Brier |",
             "|---|---|---|---|---|---|---|",
             *[f"| {LABELS[name]} | {_ci_text(ci['recall'][name])} | {_pct(m['precision_at_k'])}"
@@ -526,7 +558,10 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
               f" {_num(r['difficulty']['single_auc'][f], '.2f')} |"
               for f, c in r["coef"].items()], "",
             "Every behavioural sign matches its risk direction." if not r["signs"] else
-            f"Wrong signs: {', '.join(r['signs'])}.")
+            f"Wrong signs: {', '.join(r['signs'])}.", "",
+            "Sensitivity to the L2 strength C (fixed at 1.0, not tuned): model recall@K is "
+            + ", ".join(f"{_pct(v)} at C = {float(c):g}" for c, v in r["c_sensitivity"].items())
+            + ".")
     if "identity" in r:
         section("Identity resolution",
                 "Each source record is linked to a Salesforce account by exact keys only."

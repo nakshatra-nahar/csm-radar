@@ -41,6 +41,20 @@ def test_topk_by_book_respects_k_and_owner():
     assert top.index.equals(df.index)
 
 
+def test_headline_metrics_are_weekly_means():
+    """Design §7: recall and precision are computed per week, then averaged over weeks. Pooled
+    over rows, a heavy week would dominate (recall 0.1, precision 1/3 here)."""
+    T1, T2 = pd.Timestamp("2026-01-05", tz="UTC"), pd.Timestamp("2026-01-12", tz="UTC")
+    week = pd.Series([T1, T1, T2, T2, T2])
+    y = pd.Series([1, 0, 1, 0, 0])
+    arr = pd.Series([100.0, 100, 900, 100, 100])
+    w = pd.Series([1.0, 0, 0, 1, 1])
+    m = evaluate._metrics(y, arr, w, week)
+    assert m["recall_at_k_arr"] == pytest.approx(0.5)  # weeks: 1.0 and 0.0
+    assert m["precision_at_k"] == pytest.approx(0.5)  # weeks: 1/1 and 0/2
+    assert m["lift_at_k"] == pytest.approx(0.5 / 0.4)
+
+
 def test_acceptance_reports_each_violation():
     good = {"difficulty": {"oracle_auc": 0.85, "max_single_auc": 0.70,
                            "max_single_feature": "usage_drop", "full_model_auc": 0.80},
@@ -90,6 +104,11 @@ def test_eval_computes_all_policies_and_metrics(eval_result):
     for vs in ("renewal_sort", "rules"):
         ci = r["ci"][f"model_minus_{vs}"]
         assert ci["lo"] <= ci["diff"] <= ci["hi"]
+    for name in POLICIES:  # the bootstrap resamples the headline (weekly-mean) statistic
+        assert r["ci"]["recall"][name]["diff"] == pytest.approx(
+            r["policies"][name]["recall_at_k_arr"]), name
+    assert set(r["c_sensitivity"]) == {"0.1", "1.0", "10.0"}  # design §6
+    assert r["c_sensitivity"]["1.0"] == pytest.approx(r["policies"]["model"]["recall_at_k_arr"])
     assert r["counts"]["origins"] and len(r["counts"]["origins"]) == 4
     assert all(o["train_decisions"] > 0 and o["test_rows"] > 0 for o in r["counts"]["origins"])
     assert {"year", "month"} <= set(r["reliability"])  # per Stripe billing interval
@@ -137,6 +156,7 @@ def test_model_card_has_sections_in_order(eval_result):
     positions = [card.find(f"## {s}") for s in evaluate.SECTIONS]
     assert -1 not in positions and positions == sorted(positions)
     assert "95% CI" in card and "seat" in card  # Ruling W is stated
+    assert "C = 0.1" in card and "averaged over test weeks" in card
     p = eval_result["policies"]
     if p["renewal_sort"]["recall_at_k_arr"] < p["random"]["recall_at_k_arr"]:
         assert "already announced" in card  # why the renewal sort loses to random
