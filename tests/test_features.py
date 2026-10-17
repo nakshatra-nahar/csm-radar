@@ -99,19 +99,21 @@ def with_usage(w, sf, series, seats=None):
     return a
 
 
-def test_usage_trend_uses_only_complete_months_and_is_tenant_relative():
+def test_usage_drop_is_a_tenant_relative_hinge_on_complete_months():
     w = World()
     a = with_usage(w, "a", [10, 10, 10, 4], seats=8)
     b = with_usage(w, "b", [10, 10, 10, 10])
     c = with_usage(w, "c", [10, 10, 10, 21])
-    d = with_usage(w, "d", [None, 10, 10, 10])  # three months only
+    d = with_usage(w, "d", [None, 10, 10, 10], seats=5)  # three months only
     w.usage("a", month_end(MONTHS[4]), 50, available=T - DAY)  # May, early, for one ws only
     f = feats(w)
-    assert f.loc[a, "usage_trend"] == pytest.approx(math.log(5 / 11))
-    assert f.loc[b, "usage_trend"] == pytest.approx(0.0)  # the median account
-    assert f.loc[c, "usage_trend"] == pytest.approx(math.log(2))
-    assert math.isnan(f.loc[d, "usage_trend"])
-    assert f.loc[a, "seat_utilization"] == pytest.approx(4 / 8)  # April, not the early May
+    assert f.loc[a, "usage_drop"] == pytest.approx(math.log(11 / 5))
+    assert f.loc[b, "usage_drop"] == pytest.approx(0.0)  # the median account
+    assert f.loc[c, "usage_drop"] == 0.0  # growth is not negative risk
+    assert math.isnan(f.loc[d, "usage_drop"])
+    # the level is the mean of the last 3 complete months: Feb..Apr, not the early May
+    assert f.loc[a, "seat_utilization"] == pytest.approx((10 + 10 + 4) / 3 / 8)
+    assert f.loc[d, "seat_utilization"] == pytest.approx(10 / 5)
     assert math.isnan(f.loc[b, "seat_utilization"])  # no seats known
 
 
@@ -125,7 +127,7 @@ def test_late_product_batch_does_not_create_a_drop():
     assert watermarks(w.frames(), late)["product"] == datetime(2025, 6, 1, tzinfo=UTC)
     for at in (early, late):
         f = feats(w, at)
-        assert (f.loc[accounts, "usage_trend"] == 0).all()
+        assert (f.loc[accounts, "usage_drop"] == 0).all()
 
 
 def test_product_watermark_ignores_churned_workspaces_but_waits_for_a_late_batch():
@@ -225,7 +227,7 @@ def test_no_telemetry_imputes_and_flags():
     w.link("ws:b", b, T + DAY, "product_metadata")  # linked only after T
     f = feats(w)
     assert (f.loc[a, "no_telemetry"], f.loc[b, "no_telemetry"]) == (0, 1)
-    assert f.loc[b, ["usage_trend", "seat_utilization", "integration_broken",
+    assert f.loc[b, ["usage_drop", "seat_utilization", "integration_broken",
                      "not_live_after_30d"]].isna().all()
     assert not f.loc[b, "telemetry_linked"] and f.loc[a, "telemetry_linked"]
 
@@ -395,16 +397,16 @@ def test_champion_bounced_and_urgent_ticket_stalled():
 def test_manifest_changes_when_function_changes(monkeypatch):
     before = manifest()
     assert set(before) >= set(FEATURE_NAMES)
-    assert before["usage_trend"].startswith("v1:") and len(before["usage_trend"]) == 15
+    assert before["usage_drop"].startswith("v2:") and len(before["usage_drop"]) == 15
 
-    def usage_trend(s):  # a different implementation under the same dotted path
+    def usage_drop(s):  # a different implementation under the same dotted path
         return None
 
-    monkeypatch.setattr(features, "usage_trend", usage_trend)
+    monkeypatch.setattr(features, "usage_drop", usage_drop)
     after = manifest()
-    assert after["usage_trend"] != before["usage_trend"]
-    assert {k: v for k, v in after.items() if k != "usage_trend"} == {
-        k: v for k, v in before.items() if k != "usage_trend"}
+    assert after["usage_drop"] != before["usage_drop"]
+    assert {k: v for k, v in after.items() if k != "usage_drop"} == {
+        k: v for k, v in before.items() if k != "usage_drop"}
 
 
 def test_manifest_covers_helpers_a_feature_reaches(monkeypatch):
@@ -416,7 +418,7 @@ def test_manifest_covers_helpers_a_feature_reaches(monkeypatch):
     _monthly_users.__module__ = "radar.features"  # as if edited in place
     monkeypatch.setattr(features, "_monthly_users", _monthly_users)
     after = manifest()
-    assert after["usage_trend"] != before["usage_trend"]
+    assert after["usage_drop"] != before["usage_drop"]
     assert after["seat_utilization"] != before["seat_utilization"]
     assert after["open_urgent_tickets"] == before["open_urgent_tickets"]
 
@@ -430,10 +432,10 @@ def test_manifest_covers_constants_a_feature_reads(monkeypatch):
 
 
 def test_banned_inputs_not_in_features():
-    assert len(FEATURE_NAMES) == 13 and registry.FEATURES[0].name == "usage_trend"
+    assert len(FEATURE_NAMES) == 13 and registry.FEATURES[0].name == "usage_drop"
     assert not set(FEATURE_NAMES) & {b.name for b in BANNED}
     assert all(b.banned_reason for b in BANNED)
-    assert "| usage_trend |" in registry.render_dictionary_md()
+    assert "| usage_drop |" in registry.render_dictionary_md()
 
 
 def test_asof_helpers_visible_latest_attribute():

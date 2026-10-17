@@ -25,16 +25,19 @@ class Definition:
     banned_reason: str | None = None
 
 
-def _f(name, kind, source, unit, risk, description):
-    return Definition(name, 1, kind, source, unit, risk, description, f"radar.features:{name}")
+def _f(name, kind, source, unit, risk, description, version=1):
+    return Definition(name, version, kind, source, unit, risk, description,
+                      f"radar.features:{name}")
 
 
 FEATURES = [
-    _f("usage_trend", "behavioural", "product", "log ratio", -1,
-       "log((active_users in the last complete month + 1) / (mean of the 3 prior complete"
-       " months + 1)) minus the tenant median of the same at T; NaN with < 4 complete months"),
+    _f("usage_drop", "behavioural", "product", "log ratio", +1,
+       "max(0, -(log((active_users in the last complete month + 1) / (mean of the 3 prior"
+       " complete months + 1)) minus the tenant median of the same at T)); growth reads 0;"
+       " NaN with < 4 complete months", version=2),
     _f("seat_utilization", "behavioural", "product+billing", "ratio", -1,
-       "active_users in the last complete month / seats of the active subscription at T"),
+       "mean active_users over the last 3 complete months (those reported) / seats of the"
+       " active subscription at T", version=2),
     _f("integration_broken", "behavioural", "product", "0/1", +1,
        "1 if the latest integration event leaves the account in sync_error/disconnected and"
        " it has been broken for >= 7 days"),

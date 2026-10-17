@@ -32,6 +32,7 @@ packages = ["radar"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: generates and replays a world (deselect with -m \"not slow\")"]
 
 [tool.ruff]
 line-length = 100

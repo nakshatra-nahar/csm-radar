@@ -7,6 +7,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
 from radar.sim import INJECTION_ACCOUNT_NAME, VP_CASE_NAMES, simulate, staff
+from radar.sim.params import PARAMS
 from radar.sim.truth import write_truth
 from radar.tenants import TENANTS
 
@@ -204,3 +205,43 @@ def test_timelines_hold_plain_python_types(worlds):
         timelines = [world.crm, world.billing, world.tickets, world.emails, world.usage,
                      world.product_events, world.accounts, world.contacts, world.staff]
         assert not [v for v in _leaves(timelines) if type(v).__module__ == "numpy"]
+
+
+def test_incident_tickets_stay_open_until_the_shock_ends(worlds):
+    """A bug or integration ticket is not solved before the fix ships: the episode's end, the
+    repair, or (never repaired) unfixed_close_weeks after onset."""
+    world, checked = worlds["hearthline"], 0
+    w0 = datetime.combine(world.weeks[0], datetime.min.time(), UTC)
+    close = PARAMS["tickets"]["unfixed_close_weeks"]
+    ends = {}
+    for s in world.shocks:
+        if s.kind in ("bug_episode", "integration_break") and not s.info.get("planted"):
+            sf = world.accounts[s.account].sf_account_id
+            onset = w0 + timedelta(weeks=s.week)
+            end = w0 + timedelta(weeks=s.week + (s.weeks if s.weeks is not None else close))
+            ends.setdefault((sf, s.kind), []).append((onset, end))
+    for t in world.tickets:
+        v = t.versions[0]
+        kind = {"bug": "bug_episode", "crm_sync": "integration_break"}.get(v.tags[0])
+        if v.type != "incident" or kind is None:
+            continue
+        spans = [e for o, e in ends.get((t.sf_account_id, kind), []) if o <= t.created_at < e]
+        solved = next((x.at for x in t.versions if x.status == "solved"), None)
+        if spans and solved is not None:
+            assert solved >= min(spans), (t.id, kind, solved, spans)
+            checked += 1
+    assert checked > 20
+
+
+def test_bug_episode_is_reported_the_week_it_starts(worlds):
+    world = worlds["hearthline"]
+    w0 = datetime.combine(world.weeks[0], datetime.min.time(), UTC)
+    zd = datetime.combine(world.spec.source_start["zendesk"], datetime.min.time(), UTC)
+    created = {(t.sf_account_id, (t.created_at - w0).days // 7) for t in world.tickets
+               if t.versions[0].tags == ["bug"]}
+    starts = [(world.accounts[s.account].sf_account_id, s.week) for s in world.shocks
+              if s.kind == "bug_episode" and w0 + timedelta(weeks=s.week + 1) > zd
+              and s.week + 1 < len(world.weeks)
+              and not world.truth.effective_at.iloc[s.account] <= w0 + timedelta(weeks=s.week + 1)]
+    assert len(starts) > 20
+    assert sum(start in created for start in starts) >= 0.95 * len(starts)

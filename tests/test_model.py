@@ -19,8 +19,8 @@ from radar.registry import FEATURE_NAMES, FEATURES, manifest
 def train():
     rng = np.random.default_rng(7)
     X = pd.DataFrame(rng.normal(size=(600, len(FEATURE_NAMES))), columns=FEATURE_NAMES)
-    X["usage_trend"] = X["usage_trend"].mask(rng.random(600) < 0.3)  # no telemetry
-    logit = -2 - 1.5 * X["usage_trend"].fillna(0) + X["open_urgent_tickets"]
+    X["usage_drop"] = X["usage_drop"].mask(rng.random(600) < 0.3)  # no telemetry
+    logit = -2 + 1.5 * X["usage_drop"].fillna(0) + X["open_urgent_tickets"]
     X.index = pd.MultiIndex.from_arrays(  # 60 accounts x 10 weekly snapshots
         [np.arange(600) // 10, pd.date_range("2024-01-01", periods=10, freq="W-MON").tolist() * 60],
         names=["account_id", "as_of"])
@@ -41,8 +41,8 @@ def test_contributions_sum_to_logit(train):
     p, contrib = model.predict(artifact, train)
     assert contrib.shape == (len(train), len(FEATURE_NAMES))
     assert np.abs(artifact["intercept"] + contrib.sum(axis=1) - np.log(p / (1 - p))).max() < 1e-9
-    missing = train["usage_trend"].isna().to_numpy()
-    assert (contrib[missing, FEATURE_NAMES.index("usage_trend")] == 0).all()  # imputed: 0
+    missing = train["usage_drop"].isna().to_numpy()
+    assert (contrib[missing, FEATURE_NAMES.index("usage_drop")] == 0).all()  # imputed: 0
 
 
 def test_artifact_is_json_serialisable_and_has_no_pickle(train):
@@ -66,5 +66,5 @@ def test_check_signs_flags_wrong_direction(train):
     artifact = model.fit(train)
     right = {d.name: 0.3 * (d.risk_direction or 1) for d in FEATURES}
     assert model.check_signs(artifact | {"coef": list(right.values())}) == []
-    wrong = right | {"usage_trend": 0.5, "log_arr": -3.0}  # log_arr is structural: no gate
-    assert model.check_signs(artifact | {"coef": list(wrong.values())}) == ["usage_trend"]
+    wrong = right | {"usage_drop": -0.5, "log_arr": -3.0}  # log_arr is structural: no gate
+    assert model.check_signs(artifact | {"coef": list(wrong.values())}) == ["usage_drop"]

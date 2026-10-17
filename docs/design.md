@@ -55,14 +55,14 @@ Each tenant also has one admin (CS ops). Book size ≈ 120 accounts per CSM. Tal
 Each account has a latent health `h_t`, simulated week by week from its start. Week t reads only state at or before t. Churn decisions are drawn from `h`, never the other way round, so signals precede outcomes because of the process, not because we painted them backward from a label.
 
 - `h_t = mu_a + phi*(h_{t-1} - mu_a) + sigma*eps_t + shocks`, phi 0.92, sigma 0.25, `mu_a ~ N(0.3, 0.6)`.
-- Onboarding: h starts low and ramps over ~8 weeks. 15% of accounts fail onboarding (mu shifted -1.0 for 6 months). A `went_live` product event fires when h first crosses 0, and the 30-day go-live clock matches Fello's own CS target.
+- Onboarding: h starts low and ramps over ~8 weeks. 15% of accounts fail onboarding (mu shifted -1.0 for a year, so through the first renewal). A `went_live` product event fires when h first crosses 0, and the 30-day go-live clock matches Fello's own CS target.
 - Shocks (weekly Poisson hazards, annual rates):
-  - champion departure, 15%: h -0.8, decays over ~12 weeks. The champion's inbound email stops. A hard bounce (DSN 5.1.1) arrives the first time someone emails them, and SF marks the contact inactive weeks later or never.
-  - CRM integration break, 10%: `sync_error`, then `disconnected`; h -0.5 while broken. 60% get repaired after Exp(4 weeks). 50% file a `crm_sync` ticket.
-  - budget cut / team downsized, 6%: seat contraction in Stripe; h -0.4.
-  - competitor evaluation, 5%: h drifts -0.05 a week for 10 weeks, with few tickets.
-  - product bug episode, 10%: urgent/high ticket burst; h -0.3 for 4 weeks unless resolved.
-  - expansion, 8%: h +0.4; seats up.
+  - champion departure, 15%: h -1.0, decays over ~26 weeks. The champion's inbound email stops. A hard bounce (DSN 5.1.1) arrives the first time someone emails them, and SF marks the contact inactive weeks later or never.
+  - CRM integration break, 10%: `sync_error`, then `disconnected`; h -0.8 while broken. 40% get repaired after Exp(4 weeks). 50% file a `crm_sync` ticket, which stays on hold until the repair (or is closed unfixed after 12 weeks).
+  - budget cut / team downsized, 12%: seat contraction in Stripe; h -1.0, decaying over a year.
+  - competitor evaluation, 10%: h drifts -0.05 a week for 16 weeks, then recovers over 26, with few tickets. This slow slide is what makes a usage drop a risk signal rather than noise that reverts.
+  - product bug episode, 20%: urgent/high ticket burst, the first in the week it starts; h -1.0 for 12 weeks unless resolved in 1-2. Its tickets stay on hold until the fix ships.
+  - expansion, 15%: h +0.6; seats up.
   - tenant-wide outage week (hearthline week of 2025-11-10, tallyworks week of 2026-03-02): tickets spike across ~30% of accounts, tagged `outage-<date>`, plus a small transient h dip. This is the stress test for alerting.
 - Seasonality (hearthline only, FRED new-home-sales index; Mar 1.17 … Dec 0.85) multiplies observed usage, not h. It is nuisance the features must survive.
 - Churn decisions:
@@ -229,8 +229,8 @@ All definitions live in `radar/registry.py`, one entry per metric. Each entry ha
 
 | name | kind | source | definition (as of T) | risk_direction |
 |---|---|---|---|---|
-| usage_trend | behavioural | product | log((active_users in last complete month + 1) / (mean of prior 3 complete months + 1)) minus the tenant median of the same at T | -1 |
-| seat_utilization | behavioural | product+billing | active_users in last complete month / licensed seats | -1 |
+| usage_drop (v2) | behavioural | product | max(0, -d), where d = log((active_users in last complete month + 1) / (mean of prior 3 complete months + 1)) minus the tenant median of the same at T. Growth reads 0, so it cannot offset a low level | +1 |
+| seat_utilization (v2) | behavioural | product+billing | mean active_users over the last 3 complete months / licensed seats. One month is too noisy a level: the earlier months then act as a second level reading and the drop's sign flips (Task 5b) | -1 |
 | integration_broken | behavioural | product | 1 if an integration has been in sync_error/disconnected state for >= 7 days | +1 |
 | not_live_after_30d | behavioural | product | 1 if tenure >= 30 days and no `Workspace Went Live` | +1 |
 | open_urgent_tickets | behavioural | zendesk | log1p(tickets with status in {new, open, pending, hold} and priority in {high, urgent}) | +1 |

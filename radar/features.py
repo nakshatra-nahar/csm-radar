@@ -177,14 +177,18 @@ def _stripe_linked(s: Snapshot) -> pd.Series:
 
 # --- features (design §5.1, in registry order) ---------------------------------------------
 
-def usage_trend(s: Snapshot) -> pd.Series:
+def usage_drop(s: Snapshot) -> pd.Series:
+    """A hinge: growth reads 0, so it cannot offset a low level in the model (Task 5b)."""
     m = s.get(_monthly_users)
     raw = np.log((m[0] + 1) / (m[[1, 2, 3]].mean(axis=1, skipna=False) + 1))
-    return _product(s, raw - raw.median())
+    return _product(s, np.maximum(0.0, -(raw - raw.median())))
 
 
 def seat_utilization(s: Snapshot) -> pd.Series:
-    return _product(s, s.get(_monthly_users)[0] / _seats(s).replace(0, np.nan))
+    """A 3-month level: with one noisy month as the level, the earlier months behind
+    usage_drop measure the level too and its sign flips (Task 5b)."""
+    level = s.get(_monthly_users)[[0, 1, 2]].mean(axis=1)
+    return _product(s, level / _seats(s).replace(0, np.nan))
 
 
 def _broken_since(df: pd.DataFrame, broken: pd.Series, key: str) -> pd.Series:
@@ -423,7 +427,7 @@ def _one(s: Snapshot) -> pd.DataFrame:
 def compute_features(frames: Frames, tenant: dict, as_of: list[datetime],
                      account_ids: list | None = None, hindsight: bool = False) -> pd.DataFrame:
     """Features (registry order) and context per (account_id, as_of). The tenant median in
-    usage_trend is over every account, whatever account_ids selects."""
+    usage_drop is over every account, whatever account_ids selects."""
     by_type = split(frames)
     out = []
     for T in as_of:

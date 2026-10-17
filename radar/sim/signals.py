@@ -137,7 +137,7 @@ def usage(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list[
             weeks = [t for t in range(max(s, -(-(month - w0).days // 7)),
                                       min(e, (nxt - w0).days // 7 - 1) + 1)]
             hbar = float(np.mean(h[weeks or [max(s, (month - w0).days // 7)], i]))
-            util = lo + (hi - lo) / (1 + np.exp(-up["slope"] * hbar))
+            util = lo + (hi - lo) / (1 + np.exp(-up["slope"][slug] * hbar))
             n_seats = _seats_at(seats.get(a.sf_account_id, []),
                                 datetime.combine(month, time(), UTC), a.seats)
             season = PARAMS["seasonality"][month.month - 1] if slug == "hearthline" else 1.0

@@ -33,19 +33,20 @@ PARAMS: dict = {
     "annual_discount": 0.83,  # yearly price = 12 * monthly * this
     "latent": {"phi": 0.92, "sigma": 0.25, "mu_mean": 0.3, "mu_sd": 0.6},
     "onboarding": {"ramp_weeks": 8, "start_offset": -1.2, "fail_rate": 0.15,
-                   "fail_offset": -1.0, "fail_weeks": 26},
+                   "fail_offset": -1.0, "fail_weeks": 52},
     # shock: annual rate and health effect (see world._profile for the shape)
     "shocks": {
         # SF learns of the departure in sf_mark_share of cases, sf_lag_weeks later;
         # a successor champion appears successor_weeks later
-        "champion_departure": {"rate": 0.15, "effect": -0.8, "weeks": 12, "sf_mark_share": 0.6,
+        # Task 5b: durations and sizes set so a shock still weighs on the decision 90 days on
+        "champion_departure": {"rate": 0.15, "effect": -1.0, "weeks": 26, "sf_mark_share": 0.6,
                                "sf_lag_weeks": (3, 12), "successor_weeks": (2, 10)},
-        "integration_break": {"rate": 0.10, "effect": -0.5, "repair_share": 0.6,
+        "integration_break": {"rate": 0.10, "effect": -0.8, "repair_share": 0.4,
                               "repair_mean_weeks": 4, "ticket_share": 0.5},
-        "budget_cut": {"rate": 0.06, "effect": -0.4, "weeks": 26, "seat_cut": 0.3},
-        "competitor_eval": {"rate": 0.05, "drift": -0.05, "weeks": 10, "recover_weeks": 12},
-        "bug_episode": {"rate": 0.10, "effect": -0.3, "weeks": 4, "resolved_share": 0.4},
-        "expansion": {"rate": 0.08, "effect": 0.4, "weeks": 26, "seat_add": 0.3},
+        "budget_cut": {"rate": 0.12, "effect": -1.0, "weeks": 52, "seat_cut": 0.3},
+        "competitor_eval": {"rate": 0.10, "drift": -0.05, "weeks": 16, "recover_weeks": 26},
+        "bug_episode": {"rate": 0.20, "effect": -1.0, "weeks": 12, "resolved_share": 0.4},
+        "expansion": {"rate": 0.15, "effect": 0.6, "weeks": 26, "seat_add": 0.3},
     },
     "outage": {"hearthline": date(2025, 11, 10), "tallyworks": date(2026, 3, 2),
                "account_share": 0.3, "effect": -0.15},
@@ -54,13 +55,13 @@ PARAMS: dict = {
     # churn link: P(churn at renewal) = sigmoid(alpha + beta * mean h over prior 8 weeks);
     # month-to-month weekly hazard = sigmoid(alpha + beta * h_t)
     "churn": {
-        "hearthline": {"annual": (-2.9, -2.8), "monthly_on_contract": (-2.9, -2.8)},
-        "tallyworks": {"annual": (-3.45, -2.8), "month_to_month": (-6.35, -2.0)},
+        "hearthline": {"annual": (-3.3, -2.8), "monthly_on_contract": (-3.3, -2.8)},
+        "tallyworks": {"annual": (-4.0, -3.2), "month_to_month": (-9.4, -4.5)},
         "kitewire": {"annual": (-3.45, -2.8), "month_to_month": (-6.5, -2.0)},
     },
     "notice_days": (30, 75),
     # annual rate of churn drawn independently of h (about 20% of voluntary churn)
-    "unforecastable": {"rate": {"hearthline": 0.026, "tallyworks": 0.04, "kitewire": 0.05},
+    "unforecastable": {"rate": {"hearthline": 0.026, "tallyworks": 0.03, "kitewire": 0.05},
                        "causes": ["acquired", "business_closed", "team_dissolved",
                                   "brokerage_switch"]},
     # SF loss reasons (hearthline: Fello G2 complaint themes); a recent shock names the cause
@@ -95,28 +96,33 @@ PARAMS: dict = {
     "merge_share": 0.01,  # accounts that get a duplicate SF record, merged weeks later
     "test_accounts": 3,
     "tickets": {
-        "howto_weekly": 0.011, "howto_h": 0.5,  # rate * exp(howto_h * h)
-        "complaint_weekly": 0.008, "complaint_h": -0.7,  # rate * exp(complaint_h * h)
+        "howto_weekly": 0.007, "howto_h": 0.5,  # rate * exp(howto_h * h)
+        "complaint_weekly": 0.008, "complaint_h": -1.2,  # rate * exp(complaint_h * h)
         "silent_share": 0.4, "silent_factor": 0.3,  # silent accounts file fewer of both
-        "bug_burst": (2, 4), "reopen_share": 0.1, "csat_offered": 0.2,
+        "bug_burst": (2, 4), "reopen_share": 0.1, "csat_offered": 1.0,
         # solve time = median hours by kind * lognormal(0, solve_sigma)
         "solve_hours": {"how_to": 20, "complaint": 48, "bug": 72, "integration": 48,
                         "outage": 6, "cancellation": 24},
         "solve_sigma": 0.8,
+        # bug and integration tickets stay open until the fix ships (episode end or repair);
+        # a break never repaired is closed unfixed this many weeks after onset
+        "unfixed_close_weeks": 12,
         # answered share of offered CSAT; P(bad) = sigmoid(-(a + b * h)) + incident_bad
         # for any kind but how_to
-        "csat_answered": 0.5, "csat_bad": (1.0, 1.5), "csat_incident_bad": 0.2,
+        "csat_answered": 0.7, "csat_bad": (1.0, 3.5), "csat_incident_bad": 0.2,
     },
     # outbound = outbound_weekly * (seats / median) ** size_exp;
     # inbound = inbound_weekly * exp(inbound_h * h); reply delay = hours * lognormal(0, sigma)
     "email": {"outbound_weekly": 0.05, "size_exp": 0.3, "reply_base": 0.0, "reply_h": 1.2,
-              "reply_delay": (6, 1.0), "inbound_weekly": 0.01, "inbound_h": 0.3,
+              "reply_delay": (6, 1.0), "inbound_weekly": 0.01, "inbound_h": 0.6,
               "auto_reply": 0.03, "manager_cc": 0.05,
               "soft_bounce": 0.004, "policy_reject": 0.002, "suppress_days": 60},
     # monthly usage: value = seats * per_seat * utilisation * noise (* seasonality if listed);
-    # utilisation = lo + (hi - lo) * sigmoid(slope * mean h of the month)
+    # utilisation = lo + (hi - lo) * sigmoid(slope[tenant] * mean h of the month); hearthline's
+    # flatter slope keeps its usage level under the design §3.6 single-feature cap (Task 5b)
     "usage": {
-        "utilisation": (0.2, 0.95), "slope": 1.5, "noise_sd": 0.2,
+        "utilisation": (0.2, 0.95), "noise_sd": 0.2,
+        "slope": {"hearthline": 0.8, "tallyworks": 1.3, "kitewire": 1.5},
         "per_seat": {
             "hearthline": {"active_contacts": 450, "emails_sent": 250, "dashboard_views": 30,
                            "form_submissions": 2, "automations_active": 0.8,

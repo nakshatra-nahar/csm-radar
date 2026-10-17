@@ -74,36 +74,43 @@ def tickets(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> lis
     size = np.sqrt([a.seats / PARAMS["accounts"][slug]["seats"][0] for a in world.accounts])
     quiet = np.array([a.silent for a in world.accounts])[None, :] & (hz < 0)
     rate = np.where(quiet, tp["silent_factor"], 1.0) * size[None, :]
-    asks = []  # (created_at, account index, kind)
+    asks = []  # (created_at, account index, kind, fixed_at or None)
     for kind, lam in (("how_to", tp["howto_weekly"] * np.exp(tp["howto_h"] * hz)),
                       ("complaint", tp["complaint_weekly"] * np.exp(tp["complaint_h"] * hz))):
         counts = rng.poisson(lam * rate) * mask
         for t, a in zip(*np.nonzero(counts), strict=True):
-            asks += [(business_time(world, t, rng), a, kind) for _ in range(counts[t, a])]
+            asks += [(business_time(world, t, rng), a, kind, None)
+                     for _ in range(counts[t, a])]
     for s in world.shocks:
+        fixed = None
+        if s.kind in ("integration_break", "bug_episode"):  # open until the fix ships
+            end = s.week + (s.weeks if s.weeks is not None else tp["unfixed_close_weeks"])
+            fixed = (business_time(world, end, rng) if end < len(world.weeks)
+                     else datetime.combine(world.sim_end + timedelta(days=1), time(), UTC))
         if s.kind == "integration_break" and s.info.get("ticket"):
             weeks, kind = [s.week], "integration"
         elif s.kind == "outage":
             weeks, kind = [s.week], "outage"
         elif s.kind == "bug_episode":
             n = rng.integers(tp["bug_burst"][0], tp["bug_burst"][1] + 1)
-            weeks, kind = list(s.week + rng.integers(0, s.weeks, n)), "bug"
+            # the first report comes the week it starts; the rest while it lasts
+            weeks, kind = [s.week, *(s.week + rng.integers(0, s.weeks, n - 1))], "bug"
         else:
             continue
-        asks += [(business_time(world, t, rng), s.account, kind) for t in weeks
+        asks += [(business_time(world, t, rng), s.account, kind, fixed) for t in weeks
                  if t < len(world.weeks) and mask[t, s.account]]
     index = {a.sf_account_id: i for i, a in enumerate(world.accounts)}
     for r in world.decisions[world.decisions["mode"] == "cancellation_ticket"].itertuples():
-        asks.append((r.decided_at, index[r.sf_account_id], "cancellation"))
+        asks.append((r.decided_at, index[r.sf_account_id], "cancellation", None))
     contacts = contacts_by_account(world.contacts)
     zd_start = datetime.combine(world.spec.source_start["zendesk"], time(), UTC)
     out = []
-    for created, a, kind in sorted(asks, key=lambda x: (x[0], x[1], x[2])):
+    for created, a, kind, fixed in sorted(asks, key=lambda x: (x[0], x[1], x[2])):
         if created < zd_start:
             continue
         week = min(len(world.weeks) - 1, (created.date() - world.weeks[0]).days // 7)
         out.append(_ticket(world, world.accounts[a], contacts[world.accounts[a].sf_account_id],
-                           created, kind, float(np.nan_to_num(h[week, a])), rng))
+                           created, kind, float(np.nan_to_num(h[week, a])), rng, fixed))
     if world.slug == "hearthline":
         out.append(_injection_ticket(world, contacts))
     end = datetime.combine(world.sim_end, time.max, UTC)
@@ -119,7 +126,8 @@ def _requester(contacts: list, at: datetime) -> str:
 
 
 def _ticket(world: World, a, contacts: list, created: datetime, kind: str, h: float,
-            rng: np.random.Generator) -> Ticket:
+            rng: np.random.Generator, fixed: datetime | None = None) -> Ticket:
+    """A ticket's versions. One waiting on a fix goes on hold and is solved once it ships."""
     ttype, priorities = TICKET_KINDS[kind]
     slug, tp = world.slug, PARAMS["tickets"]
     if kind == "complaint":
@@ -148,6 +156,9 @@ def _ticket(world: World, a, contacts: list, created: datetime, kind: str, h: fl
                                             * rng.lognormal(0, tp["solve_sigma"])))
     if rng.random() < tp["reopen_share"]:  # waiting on the customer first
         t.versions.append(version(created + (solve - created) / 2, "pending"))
+    if fixed is not None and fixed > solve:  # escalated to engineering
+        t.versions.append(version(solve, "hold"))
+        solve = fixed
     csat = "unoffered"
     if rng.random() < tp["csat_offered"]:
         a_bad, b_bad = tp["csat_bad"]
