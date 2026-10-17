@@ -76,7 +76,9 @@ METRICS = [
        " monthly: SF Renewal_Date__c as of T; month-to-month: the current period end",
        "radar.features:term_end", unit="timestamp"),
     _m("completeness_watermark", "Product: the latest month reported by >= 90% of the linked"
-       " workspaces expected to report; other sources: the max visible available_at",
+       " workspaces that reported the previous month (churned accounts' workspaces stay linked"
+       " but stop reporting, so they leave the denominator); other sources: the max visible"
+       " available_at",
        "radar.features:watermarks", unit="timestamp"),
     _m("eligible", "Active subscription, not test, not merged, not in open dunning, and"
        " month-to-month or term end <= eligibility_window_days (150) away; training also"

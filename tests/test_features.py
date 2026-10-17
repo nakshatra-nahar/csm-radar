@@ -128,6 +128,22 @@ def test_late_product_batch_does_not_create_a_drop():
         assert (f.loc[accounts, "usage_trend"] == 0).all()
 
 
+def test_product_watermark_ignores_churned_workspaces_but_waits_for_a_late_batch():
+    """Ruling T: the denominator is last month's reporters, so churned accounts' workspaces
+    (still linked, never reporting again) cannot freeze the watermark."""
+    w = World()
+    for i in range(20):  # one workspace churns after each of Jan, Feb, Mar: 17 report April
+        with_usage(w, f"w{i:02d}", [10] * (1 + i if i < 3 else 4))
+    late = datetime(2025, 6, 10, tzinfo=UTC)
+    for i in range(3, 19):  # May: 5 of April's 17 early, 11 late, w19 churns too
+        w.usage(f"w{i:02d}", month_end(MONTHS[4]), 10,
+                available=T - DAY if i < 8 else late - DAY)
+    # all-linked would give April 17/20 = 85% and hold at March; last-month reporters: 17/18
+    assert watermarks(w.frames(), T)["product"] == datetime(2025, 5, 1, tzinfo=UTC)
+    # 16 of April's 17 reporters delivered May (94%) although only 16 of 20 linked did
+    assert watermarks(w.frames(), late)["product"] == datetime(2025, 6, 1, tzinfo=UTC)
+
+
 def test_open_urgent_tickets_reads_ticket_version_current_at_T():
     w = World()
     a = w.account("a")

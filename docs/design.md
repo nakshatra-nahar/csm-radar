@@ -311,6 +311,7 @@ Missing-data semantics:
   - product: the monthly batch due on the 3rd plus 3 days.
 
   A source past its threshold raises one `source_stale` incident, and My Week shows a freshness banner. Its features are already frozen at the completeness watermark.
+- Completeness watermark v1: for product, the latest month that >= 90% of the linked workspaces that reported the previous month have reported. The denominator is last month's reporters, not all linked workspaces, because churned accounts' workspaces stay linked but never report again. For other sources it is the max visible `available_at`.
 
 ## 6. Model
 
