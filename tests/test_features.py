@@ -391,6 +391,28 @@ def test_manifest_changes_when_function_changes(monkeypatch):
         k: v for k, v in before.items() if k != "usage_trend"}
 
 
+def test_manifest_covers_helpers_a_feature_reaches(monkeypatch):
+    before = manifest()
+
+    def _monthly_users(s):  # e.g. 3 months instead of 4
+        return None
+
+    _monthly_users.__module__ = "radar.features"  # as if edited in place
+    monkeypatch.setattr(features, "_monthly_users", _monthly_users)
+    after = manifest()
+    assert after["usage_trend"] != before["usage_trend"]
+    assert after["seat_utilization"] != before["seat_utilization"]
+    assert after["open_urgent_tickets"] == before["open_urgent_tickets"]
+
+
+def test_manifest_covers_constants_a_feature_reads(monkeypatch):
+    before = manifest()
+    monkeypatch.setattr(features, "EMAIL_CAP", 90.0)
+    after = manifest()
+    assert after["days_since_customer_email"] != before["days_since_customer_email"]
+    assert after["open_urgent_tickets"] == before["open_urgent_tickets"]
+
+
 def test_banned_inputs_not_in_features():
     assert len(FEATURE_NAMES) == 13 and registry.FEATURES[0].name == "usage_trend"
     assert not set(FEATURE_NAMES) & {b.name for b in BANNED}

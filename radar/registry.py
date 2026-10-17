@@ -7,6 +7,7 @@ it lazily, so this module imports nothing of ours and every other module may imp
 import hashlib
 import importlib
 import inspect
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -150,10 +151,49 @@ def impl(d: Definition) -> Callable:
     return getattr(importlib.import_module(module), name)
 
 
+_OURS = ("radar.features", "radar.asof")
+_PLAIN = (int, float, str, list, tuple, set, frozenset)  # not dicts: TENANTS is config
+
+
+def _names(code) -> set[str]:
+    return set(code.co_names).union(*(_names(c) for c in code.co_consts if inspect.iscode(c)))
+
+
+def _closure_source(fn: Callable) -> str:
+    """fn's source plus every radar.features/radar.asof function or class it reaches through
+    globals or annotations, and the plain constants they read, so editing a helper changes
+    the hash too (design §5: the scorer fails closed on any semantic change)."""
+    parts: dict[str, str] = {}
+    todo = [fn]
+    while todo:
+        obj = todo.pop()
+        key = f"{obj.__module__}.{obj.__qualname__}"
+        if key in parts:
+            continue
+        parts[key] = inspect.getsource(obj)
+        g = vars(sys.modules[obj.__module__])
+        fns = ([v for v in vars(obj).values() if inspect.isfunction(v)]
+               if inspect.isclass(obj) else [obj])
+        for f in fns:
+            todo += [v for v in f.__annotations__.values() if _ours(v)]
+            for n in _names(f.__code__) & g.keys():
+                v = g[n]
+                if _ours(v):
+                    todo.append(v)
+                elif isinstance(v, _PLAIN):
+                    plain = sorted(v) if isinstance(v, set | frozenset) else v
+                    parts[f"{obj.__module__}:{n}"] = repr(plain)
+    return "\n".join(parts[k] for k in sorted(parts))
+
+
+def _ours(v) -> bool:
+    return (inspect.isfunction(v) or inspect.isclass(v)) and v.__module__ in _OURS
+
+
 def manifest() -> dict[str, str]:
-    """name -> "v<version>:<sha256 of the implementation's source, 12 hex>"."""
+    """name -> "v<version>:<sha256 of the implementation's source closure, 12 hex>"."""
     return {d.name: f"v{d.version}:"
-            + hashlib.sha256(inspect.getsource(impl(d)).encode()).hexdigest()[:12]
+            + hashlib.sha256(_closure_source(impl(d)).encode()).hexdigest()[:12]
             for d in FEATURES + METRICS + RULES if d.fn}
 
 

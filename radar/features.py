@@ -230,9 +230,8 @@ def support_friction_90d(s: Snapshot) -> pd.Series:
 def days_since_customer_email(s: Snapshot) -> pd.Series:
     """Measured to the Gmail watermark, so a late mailbox sync does not look like silence."""
     mark = min(s.get(_watermarks).get("gmail") or s.T, s.T)
-    e = s.ev("email.message")
-    e = e[(e["direction"] == "inbound") & ~e["is_auto_reply"].eq(True) & ~e["is_dsn"].eq(True)
-          & (e["occurred_at"] <= mark)]
+    e = _inbound(s)
+    e = e[e["occurred_at"] <= mark]
     days = ((mark - e.groupby("account_id")["occurred_at"].max()) / DAY).clip(upper=EMAIL_CAP)
     connected = s.source_start("gmail") <= s.T
     return s.series(days, fill=EMAIL_CAP if connected else np.nan)
