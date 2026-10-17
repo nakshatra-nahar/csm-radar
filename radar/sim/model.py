@@ -200,3 +200,25 @@ def clip_to_start(items: list, start: date, key, snapshot) -> list:
         elif (k := key(item)) is not None:
             last[k] = item
     return [s for s in (snapshot(i, at) for i in last.values()) if s is not None] + out
+
+
+def present(contacts: list[Contact], at: datetime) -> list[Contact]:
+    """Contacts who are at the customer at `at`: created, and not yet departed (truth)."""
+    return [c for c in contacts if c.created_at <= at
+            and not (c.departed_at and c.departed_at <= at)]
+
+
+def contacts_by_account(contacts: list[Contact]) -> dict[str, list[Contact]]:
+    out: dict[str, list[Contact]] = {}
+    for c in contacts:
+        out.setdefault(c.sf_account_id, []).append(c)
+    return out
+
+
+def seat_timeline(billing: list[BillingEvent]) -> dict[str, list[tuple[datetime, int]]]:
+    """(at, quantity) per account from Stripe sub_created and seat_change events."""
+    seats: dict[str, list] = {}
+    for b in billing:
+        if b.kind in ("sub_created", "seat_change"):
+            seats.setdefault(b.sf_account_id, []).append((b.at, b.quantity))
+    return seats

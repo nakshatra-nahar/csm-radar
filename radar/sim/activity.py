@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from radar.sim.model import Ticket, TicketVersion, local_dt
+from radar.sim.model import Ticket, TicketVersion, contacts_by_account, local_dt, present
 from radar.sim.names import (
     COMPLAINT_TAGS,
     INJECTION_ACCOUNT_NAME,
@@ -54,14 +54,14 @@ def business_time(world: World, week: int, rng: np.random.Generator) -> datetime
     return local_dt(day, float(rng.uniform(8.5, 18)), world.spec.timezone)
 
 
-# kind -> (ticket type, priorities to draw from, median hours to solve)
+# kind -> (ticket type, priorities to draw from); solve times are in PARAMS["tickets"]
 TICKET_KINDS = {
-    "how_to": ("question", ["low", "normal", "normal"], 20),
-    "complaint": ("question", ["normal", "high"], 48),
-    "bug": ("incident", ["high", "urgent"], 72),
-    "integration": ("incident", ["high"], 48),
-    "outage": ("incident", ["high", "urgent", "urgent"], 6),
-    "cancellation": ("task", ["normal"], 24),
+    "how_to": ("question", ["low", "normal", "normal"]),
+    "complaint": ("question", ["normal", "high"]),
+    "bug": ("incident", ["high", "urgent"]),
+    "integration": ("incident", ["high"]),
+    "outage": ("incident", ["high", "urgent", "urgent"]),
+    "cancellation": ("task", ["normal"]),
 }
 
 
@@ -95,9 +95,7 @@ def tickets(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> lis
     index = {a.sf_account_id: i for i, a in enumerate(world.accounts)}
     for r in world.decisions[world.decisions["mode"] == "cancellation_ticket"].itertuples():
         asks.append((r.decided_at, index[r.sf_account_id], "cancellation"))
-    contacts: dict[str, list] = {}
-    for c in world.contacts:
-        contacts.setdefault(c.sf_account_id, []).append(c)
+    contacts = contacts_by_account(world.contacts)
     zd_start = datetime.combine(world.spec.source_start["zendesk"], time(), UTC)
     out = []
     for created, a, kind in sorted(asks, key=lambda x: (x[0], x[1], x[2])):
@@ -117,14 +115,12 @@ def tickets(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> lis
 
 
 def _requester(contacts: list, at: datetime) -> str:
-    present = [c for c in contacts if c.created_at <= at and not (c.departed_at and
-                                                                   c.departed_at <= at)]
-    return (present or contacts)[0].email
+    return (present(contacts, at) or contacts)[0].email
 
 
 def _ticket(world: World, a, contacts: list, created: datetime, kind: str, h: float,
             rng: np.random.Generator) -> Ticket:
-    ttype, priorities, median_hours = TICKET_KINDS[kind]
+    ttype, priorities = TICKET_KINDS[kind]
     slug, tp = world.slug, PARAMS["tickets"]
     if kind == "complaint":
         j = int(rng.integers(len(COMPLAINT_TAGS[slug])))
@@ -148,13 +144,17 @@ def _ticket(world: World, a, contacts: list, created: datetime, kind: str, h: fl
         return TicketVersion(at, status, priority, ttype, tags, csat, subject, description)
 
     t.versions.append(version(created, "new"))
-    solve = created + timedelta(hours=float(median_hours * rng.lognormal(0, 0.8)))
+    solve = created + timedelta(hours=float(tp["solve_hours"][kind]
+                                            * rng.lognormal(0, tp["solve_sigma"])))
     if rng.random() < tp["reopen_share"]:  # waiting on the customer first
         t.versions.append(version(created + (solve - created) / 2, "pending"))
     csat = "unoffered"
     if rng.random() < tp["csat_offered"]:
-        bad = 1 / (1 + np.exp(1.0 + 1.5 * h)) + (0.2 if kind != "how_to" else 0.0)
-        csat = "offered" if rng.random() < 0.5 else ("bad" if rng.random() < bad else "good")
+        a_bad, b_bad = tp["csat_bad"]
+        bad = 1 / (1 + np.exp(a_bad + b_bad * h)) + (tp["csat_incident_bad"]
+                                                     if kind != "how_to" else 0.0)
+        csat = ("offered" if rng.random() < 1 - tp["csat_answered"]
+                else "bad" if rng.random() < bad else "good")
     t.versions.append(version(solve, "solved", csat))
     return t
 

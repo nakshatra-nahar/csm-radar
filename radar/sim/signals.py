@@ -9,7 +9,15 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from radar.sim.activity import business_time, week_mask
-from radar.sim.model import Email, ProductEvent, UsageMonth, add_months
+from radar.sim.model import (
+    Email,
+    ProductEvent,
+    UsageMonth,
+    add_months,
+    contacts_by_account,
+    present,
+    seat_timeline,
+)
 from radar.sim.names import EMAIL_SUBJECTS, SILENT_INTEGRATIONS
 from radar.sim.params import PARAMS
 
@@ -31,17 +39,15 @@ def emails(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list
     mask = week_mask(world, spans, "gmail")
     hz = np.nan_to_num(h)
     median = PARAMS["accounts"][world.slug]["seats"][0]
-    size = np.array([(a.seats / median) ** 0.3 for a in world.accounts])
+    size = np.array([(a.seats / median) ** ep["size_exp"] for a in world.accounts])
     n_out = rng.poisson(ep["outbound_weekly"] * size[None, :] * mask)
-    n_in = rng.poisson(ep["inbound_weekly"] * np.exp(0.3 * hz) * mask)
+    n_in = rng.poisson(ep["inbound_weekly"] * np.exp(ep["inbound_h"] * hz) * mask)
     manager = {r["email"]: r["manager_email"] for r in world.staff}
     suppressed: dict[int, date] = {}  # VP cases: CSM outbound stops at the first planted shock
     for s in world.shocks:
         if s.info.get("planted"):
             suppressed.setdefault(s.account, world.weeks[s.week])
-    contacts: dict[str, list] = {}
-    for c in world.contacts:
-        contacts.setdefault(c.sf_account_id, []).append(c)
+    contacts = contacts_by_account(world.contacts)
     end = datetime.combine(world.sim_end, time.max, UTC)
     out: list[Email] = []
     for i, a in enumerate(world.accounts):
@@ -55,10 +61,9 @@ def emails(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list
             thread = f"{a.sf_account_id}:{n}"
             week = (at.date() - world.weeks[0]).days // 7
             if direction == "in":
-                present = [c for c in people if c.created_at <= at
-                           and not (c.departed_at and c.departed_at <= at)]
-                if present:
-                    who = present[rng.integers(len(present))]
+                here = present(people, at)
+                if here:
+                    who = here[rng.integers(len(here))]
                     out.append(Email(a.sf_account_id, at, "inbound", [csm], who.email, [csm], [],
                                      INBOUND_SUBJECTS[rng.integers(len(INBOUND_SUBJECTS))],
                                      thread))
@@ -87,7 +92,8 @@ def emails(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list
                                  "Automatic reply: " + subject, thread, is_auto_reply=True))
             elif rng.random() < 1 / (1 + np.exp(-(ep["reply_base"] + ep["reply_h"] * hz[
                     min(week, len(world.weeks) - 1), i]))):
-                reply_at = at + timedelta(hours=float(6 * rng.lognormal(0, 1)))
+                hours, sigma = ep["reply_delay"]
+                reply_at = at + timedelta(hours=float(hours * rng.lognormal(0, sigma)))
                 out.append(Email(a.sf_account_id, reply_at, "inbound", boxes, to.email, [csm],
                                  cc, "Re: " + subject, thread))
     return sorted((e for e in out if e.sent_at <= end), key=lambda e: e.sent_at)
@@ -108,14 +114,6 @@ def _dsn(a, at: datetime, csm: str, recipient: str, status: str, thread: str) ->
                  failed_recipient=recipient)
 
 
-def _seat_timeline(world: World) -> dict[str, list]:
-    seats: dict[str, list] = {}
-    for b in world.billing:
-        if b.kind in ("sub_created", "seat_change"):
-            seats.setdefault(b.sf_account_id, []).append((b.at, b.quantity))
-    return seats
-
-
 def _seats_at(timeline: list, at: datetime, default: int) -> int:
     return next((q for t, q in reversed(timeline) if t <= at), default)
 
@@ -125,7 +123,7 @@ def usage(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list[
     up, slug, w0 = PARAMS["usage"], world.slug, world.weeks[0]
     lo, hi = up["utilisation"]
     first = world.spec.source_start["product"].replace(day=1)
-    seats = _seat_timeline(world)
+    seats = seat_timeline(world.billing)
     out = []
     for i, a in enumerate(world.accounts):
         if not a.workspace_id:
@@ -149,11 +147,14 @@ def usage(world: World, rng: np.random.Generator, h: np.ndarray, spans) -> list[
                 metrics[name] = int(round(n_seats * per_seat * util * factor
                                           * rng.lognormal(0, up["noise_sd"])))
             if slug == "hearthline":
-                sent = metrics["emails_sent"]
-                metrics["emails_delivered"] = int(sent * rng.uniform(0.95, 0.99))
-                metrics["email_opens"] = int(metrics["emails_delivered"] * (0.1 + 0.25 * util))
-                metrics["felix_handoffs"] = int(rng.poisson(metrics["felix_calls_made"] * 0.025))
-                metrics["lead_score_avg"] = round(float(30 + 50 * util + rng.normal(0, 3)), 1)
+                d, sent = up["hearthline_derived"], metrics["emails_sent"]
+                (o_a, o_b), (l_a, l_b, l_sd) = d["open_rate"], d["lead_score"]
+                metrics["emails_delivered"] = int(sent * rng.uniform(*d["delivered"]))
+                metrics["email_opens"] = int(metrics["emails_delivered"] * (o_a + o_b * util))
+                metrics["felix_handoffs"] = int(rng.poisson(metrics["felix_calls_made"]
+                                                            * d["handoff_rate"]))
+                metrics["lead_score_avg"] = round(float(l_a + l_b * util
+                                                        + rng.normal(0, l_sd)), 1)
             out.append(UsageMonth(a.sf_account_id, a.workspace_id, month, nxt, metrics))
             month = nxt
     return out
@@ -169,7 +170,7 @@ def product_events(world: World, rng: np.random.Generator, h: np.ndarray,
     """Go-live, integration breaks (native integrations only), seat suspensions and Sales
     Agent pauses, for linked workspaces."""
     slug, out = world.slug, []
-    seats = _seat_timeline(world)
+    seats = seat_timeline(world.billing)
     for s in world.shocks:
         a = world.accounts[s.account]
         if not a.workspace_id:

@@ -8,14 +8,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from radar.sim.model import Account, CrmChange, clip_to_start, local_dt
+from radar.sim.model import Account, CrmChange, clip_to_start, local_dt, seat_timeline
 from radar.sim.names import sf_id
 from radar.sim.params import PARAMS
 
 if TYPE_CHECKING:
     from radar.sim.world import World
-
-OPP_OPEN_DAYS = 120  # renewal opportunity opens this long before the term end
 
 
 def crm_changes(world: World, rng: np.random.Generator, seq) -> list[CrmChange]:
@@ -28,10 +26,7 @@ def crm_changes(world: World, rng: np.random.Generator, seq) -> list[CrmChange]:
                       "ManagerId": by_email[r["manager_email"]]["sf_user_id"]
                       if r["manager_email"] else None}) for r in world.staff]
     owner = next(r["sf_user_id"] for r in world.staff if r["role"] == "admin")
-    seats = {}
-    for b in world.billing:
-        if b.kind in ("sub_created", "seat_change"):
-            seats.setdefault(b.sf_account_id, []).append((b.at, b.quantity))
+    seats = seat_timeline(world.billing)
     decisions = {k: g.to_dict("records") for k, g in world.decisions.groupby("sf_account_id")}
 
     for a in world.accounts:
@@ -99,7 +94,7 @@ def _opportunities(world: World, a: Account, rows: list[dict], rng: np.random.Ge
             closed = {"no_notice": r["effective_at"],
                       "stripe_cancel": r["decided_at"] + days(2, 14)}.get(
                 r["mode"], r["decided_at"] + days(1, 10))
-        opened = min(local_dt(term_end - timedelta(days=OPP_OPEN_DAYS), 9.5, tz),
+        opened = min(local_dt(term_end - timedelta(days=PARAMS["opp_open_days"]), 9.5, tz),
                      closed - timedelta(days=1))
         stages = [(opened, "Prospecting"), (closed, "Closed Won" if won else "Closed Lost")]
         opp_id = sf_id("006", next(seq))

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from radar.sim.model import Account, PaymentFailure, Shock, add_months, local_dt
-from radar.sim.names import VP_TERM_ENDS
+from radar.sim.names import INJECTION_ACCOUNT_NAME, VP_TERM_ENDS
 from radar.sim.params import PARAMS
 from radar.tenants import TenantSpec
 
@@ -58,17 +58,25 @@ def decide(spec: TenantSpec, accounts: list[Account], starts: np.ndarray, h: np.
     for i, (a, s) in enumerate(zip(accounts, starts, strict=True)):
         mine, rows, churn = by_account.get(i, []), [], None
         u_week = n_weeks if a.vp_case else s + int(rng.geometric(uf["rate"][slug] / 52))
+        # the §3.4 injection fixture must be active and scored at its 2026-09-08 ticket and at
+        # history_end: it renews every term ending in 2026 or earlier, and has no
+        # unforecastable or involuntary churn (draws are still taken to keep the RNG stream)
+        guarded = a.name == INJECTION_ACCOUNT_NAME
+        if guarded:
+            u_week = n_weeks
         if a.contract:
             alpha, beta = ch[a.billing]
             for k in itertools.count(1):
                 term_end = add_months(a.start, 12 * k)
-                day = term_end - timedelta(days=35 if a.vp_case else int(
+                day = term_end - timedelta(days=PARAMS["vp_notice_days"] if a.vp_case else int(
                     rng.integers(PARAMS["notice_days"][0], PARAMS["notice_days"][1] + 1)))
                 dw = (day - weeks[0]).days // 7
                 if dw >= min(u_week, n_weeks):
                     break
                 p = float(sigmoid(alpha + beta * np.mean(h[max(s, dw - 8) : dw, i])))
                 churned = term_end in VP_TERM_ENDS if a.vp_case else rng.random() < p
+                if guarded and term_end <= date(2026, 12, 31):
+                    churned = False
                 row = {"decided_at": local_dt(day, 10 + 7 * rng.random(), tz),
                        "term_end": term_end, "effective_at": local_dt(term_end, 15, tz),
                        "p_churn": p}
@@ -95,7 +103,7 @@ def decide(spec: TenantSpec, accounts: list[Account], starts: np.ndarray, h: np.
             churn |= {"kind": "churn", "term_end": end,
                       "effective_at": local_dt(end, 15, tz), "involuntary": False,
                       "mode": "stripe_cancel" if a.vp_case else modes[rng.choice(3, p=mode_p)]}
-        if a.interval == "month":  # card payers: Smart Retries, then cancellation
+        if a.interval == "month" and not guarded:  # card payers: Smart Retries, then cancellation
             limit = churn["decided_at"].date() if churn else weeks[-1]
             for m in itertools.count(1):
                 inv = add_months(a.start, m)

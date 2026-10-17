@@ -16,7 +16,7 @@ from radar.sim.params import PARAMS
 if TYPE_CHECKING:
     from radar.sim.world import World
 
-ATTEMPT_GAP = timedelta(hours=47)  # 8 Smart Retries attempts land inside the 14-day window
+ATTEMPT_GAP = timedelta(hours=PARAMS["payments"]["attempt_gap_hours"])
 
 
 def billing_events(world: World, rng: np.random.Generator) -> list[BillingEvent]:

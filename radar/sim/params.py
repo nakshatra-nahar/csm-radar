@@ -34,7 +34,7 @@ PARAMS: dict = {
     "latent": {"phi": 0.92, "sigma": 0.25, "mu_mean": 0.3, "mu_sd": 0.6},
     "onboarding": {"ramp_weeks": 8, "start_offset": -1.2, "fail_rate": 0.15,
                    "fail_offset": -1.0, "fail_weeks": 26},
-    # shock: annual rate and health effect (see world._shock_profile for the shape)
+    # shock: annual rate and health effect (see world._profile for the shape)
     "shocks": {
         # SF learns of the departure in sf_mark_share of cases, sf_lag_weeks later;
         # a successor champion appears successor_weeks later
@@ -82,7 +82,11 @@ PARAMS: dict = {
     "cancel_at_share": 0.25,  # of Stripe cancels, use cancel_at instead of cancel_at_period_end
     "save_share": 0.5,  # renewers schedule then reverse a cancel with prob save_share * p_churn
     "loss_reason_noise": 0.25,  # SF loss reason differs from the true cause this often
-    "payments": {"fail_monthly": 0.015, "max_attempts": 8, "retry_days": 14, "recover": 0.6},
+    # attempt_gap_hours: 8 Smart Retries attempts land inside the 14-day window
+    "payments": {"fail_monthly": 0.015, "max_attempts": 8, "retry_days": 14, "recover": 0.6,
+                 "attempt_gap_hours": 47},
+    "opp_open_days": 120,  # renewal opportunity opens this long before the term end
+    "vp_notice_days": 35,  # the VP cases decide this long before the term end they lose
     "telemetry_share": 0.82,
     # hearthline: chance a shock also pauses the Felix Sales Agent (account-wide)
     "sales_agent_pause": {"competitor_eval": 0.5, "budget_cut": 0.3},
@@ -95,9 +99,19 @@ PARAMS: dict = {
         "complaint_weekly": 0.008, "complaint_h": -0.7,  # rate * exp(complaint_h * h)
         "silent_share": 0.4, "silent_factor": 0.3,  # silent accounts file fewer of both
         "bug_burst": (2, 4), "reopen_share": 0.1, "csat_offered": 0.2,
+        # solve time = median hours by kind * lognormal(0, solve_sigma)
+        "solve_hours": {"how_to": 20, "complaint": 48, "bug": 72, "integration": 48,
+                        "outage": 6, "cancellation": 24},
+        "solve_sigma": 0.8,
+        # answered share of offered CSAT; P(bad) = sigmoid(-(a + b * h)) + incident_bad
+        # for any kind but how_to
+        "csat_answered": 0.5, "csat_bad": (1.0, 1.5), "csat_incident_bad": 0.2,
     },
-    "email": {"outbound_weekly": 0.05, "reply_base": 0.0, "reply_h": 1.2,
-              "inbound_weekly": 0.01, "auto_reply": 0.03, "manager_cc": 0.05,
+    # outbound = outbound_weekly * (seats / median) ** size_exp;
+    # inbound = inbound_weekly * exp(inbound_h * h); reply delay = hours * lognormal(0, sigma)
+    "email": {"outbound_weekly": 0.05, "size_exp": 0.3, "reply_base": 0.0, "reply_h": 1.2,
+              "reply_delay": (6, 1.0), "inbound_weekly": 0.01, "inbound_h": 0.3,
+              "auto_reply": 0.03, "manager_cc": 0.05,
               "soft_bounce": 0.004, "policy_reject": 0.002, "suppress_days": 60},
     # monthly usage: value = seats * per_seat * utilisation * noise (* seasonality if listed);
     # utilisation = lo + (hi - lo) * sigmoid(slope * mean h of the month)
@@ -112,5 +126,9 @@ PARAMS: dict = {
             "kitewire": {"builds_run": 60, "deploys": 8, "api_calls": 3000},
         },
         "seasonal": ["emails_sent", "dashboard_views", "form_submissions", "felix_calls_made"],
+        # hearthline derived metrics: delivered = sent * U(lo, hi); opens = delivered *
+        # (a + b * util); handoffs ~ Poisson(calls * rate); lead score = a + b * util + N(0, sd)
+        "hearthline_derived": {"delivered": (0.95, 0.99), "open_rate": (0.1, 0.25),
+                               "handoff_rate": 0.025, "lead_score": (30, 50, 3)},
     },
 }

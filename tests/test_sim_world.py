@@ -118,6 +118,14 @@ def test_vp_cases_and_injection_planted(worlds):
     assert len(hits) >= 2 and hits[0].at < hits[-1].at
 
 
+@pytest.mark.parametrize("seed", [7, 1, 4])  # 1 and 4 churned it before the fix
+def test_injection_account_is_active_through_history_end(worlds, seed):
+    world = worlds["hearthline"] if seed == 7 else simulate("hearthline", seed=seed, scale=0.15)
+    row = world.truth[world.truth.name == INJECTION_ACCOUNT_NAME].iloc[0]
+    assert pd.isna(row.effective_at) or row.effective_at > datetime(2026, 9, 8, tzinfo=UTC)
+    assert pd.isna(row.decision_at) or row.decision_at > HISTORY_END  # scored, gets a draft
+
+
 @pytest.mark.parametrize("slug", TENANTS)
 def test_telemetry_coverage_and_outage_week(worlds, slug):
     world = worlds[slug]
