@@ -257,7 +257,8 @@ build was run are left out.
   Capacity is a cap, not a quota: a healthy book gets a shorter list, and every list is a
   prefix of its book's ranking. The backtest applies the same floor. A must-act that opens
   after the freeze (Ruling BH) is appended at the end of its owner's list for the week,
-  marked new since Monday and counted as overflow past K; nothing re-sorts.
+  marked new since Monday and counted as overflow past K; nothing re-sorts. If Monday's
+  sweep goes dead, the next sweep that week freezes the list from its own run.
 - **Alternatives.** Rank by p alone (Ruling AP's floor on p); fill every slot regardless of
   risk; re-rank daily.
 - **Why.** p x ARR is the expected loss a touch can address. A floor on the key itself can

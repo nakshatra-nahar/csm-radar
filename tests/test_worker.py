@@ -14,7 +14,12 @@ from psycopg.rows import dict_row
 
 from radar import clock, policy
 from radar.agent import handlers, jobs, worker
-from radar.bootstrap import _bootstrap_sweep, replay_feed, seed_tenants_and_users
+from radar.bootstrap import (
+    _bootstrap_sweep,
+    _freeze_this_week,
+    replay_feed,
+    seed_tenants_and_users,
+)
 from radar.db import Database, owner_connect
 from radar.tenants import runtime_config, tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
@@ -517,6 +522,36 @@ def test_monday_sweep_retried_after_midnight_still_freezes_monday(world):
     assert [s["status"] for s in sweeps] == ["done", "done"]
     weeks = {w["week_start"] for w in rows(world.owner, "SELECT week_start FROM worklists")}
     assert weeks == {MONDAY.date()}
+
+
+def test_a_dead_monday_sweep_is_caught_up_by_the_next_sweep_of_the_week(world):
+    """Freezing is not tied to the Monday job alone: when Monday's sweep goes dead, Tuesday's
+    sweep freezes the week from its own run, for a tenant that has frozen lists before."""
+    bootstrap_sweep(world.db, T0)
+    drain(world.db, T0)
+    _freeze_this_week(world.db, TALLY, T0)  # last week's lists, as bootstrap leaves them
+    worker.schedule(world.db, MONDAY)
+    world.owner.execute("UPDATE jobs SET status = 'dead' WHERE kind = 'daily_sweep'"
+                        " AND status = 'queued'")  # five failed attempts
+    tuesday = datetime(2026, 10, 27, 6, tzinfo=UTC)
+    drain(world.db, tuesday)
+    lists = rows(world.owner, "SELECT week_start, frozen_at FROM worklists"
+                 " WHERE week_start = %s", MONDAY.date())
+    assert lists and {w["frozen_at"] for w in lists} == {tuesday}
+    drain(world.db, datetime(2026, 10, 28, 6, tzinfo=UTC))  # frozen once, not again
+    assert {w["frozen_at"] for w in rows(world.owner, "SELECT frozen_at FROM worklists"
+                                         " WHERE week_start = %s", MONDAY.date())} == {tuesday}
+
+
+def test_a_still_queued_sweep_takes_the_newest_period(world):
+    """A sweep still queued absorbs the next day's, and runs for the newer day: Sunday's
+    sweep left waiting until Monday freezes Monday's week."""
+    sunday = datetime(2026, 10, 25, 6, tzinfo=UTC)
+    worker.schedule(world.db, sunday)
+    worker.schedule(world.db, MONDAY)
+    queued = rows(world.owner, "SELECT payload FROM jobs WHERE kind = 'daily_sweep'"
+                  " AND status = 'queued'")
+    assert [q["payload"] for q in queued] == [{"period": MONDAY.date().isoformat()}]
 
 
 def test_unowned_overdue_case_goes_to_the_admin_digest(world):

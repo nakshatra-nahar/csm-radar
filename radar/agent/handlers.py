@@ -198,11 +198,12 @@ def freeze_week(conn, tenant_id, run_id, week_start: date, now: datetime, cfg: d
 
 
 def daily_sweep(db: Database, job: Job) -> None:
-    """Score every account, recheck every rule, open cases, and on the tenant's Monday freeze
-    the lists and send the digests; briefs for new cases and frozen model slots. The day is
-    the scheduled local date (payload 'period'), so a Monday sweep retried after local
-    midnight still freezes Monday's week. Payload {'bootstrap': true} opens the first
-    backlog past the breaker, audited, once per tenant (Rulings AB, AK)."""
+    """Score every account, recheck every rule, open cases, and on the tenant's Monday (or the
+    first sweep after a missed one) freeze the lists and send the digests; briefs for new
+    cases and frozen model slots. The day is the scheduled local date (payload 'period'), so
+    a Monday sweep retried after local midnight still freezes Monday's week. Payload
+    {'bootstrap': true} opens the first backlog past the breaker, audited, once per tenant
+    (Rulings AB, AK)."""
     tid, now = job.tenant_id, clock.now()
     try:
         run_id = score_tenant(db, tid, now, trigger="sweep", actionable=True)
@@ -225,9 +226,12 @@ def daily_sweep(db: Database, job: Job) -> None:
                 "INSERT INTO audit_log (at, actor, action, entity_type, entity_id, after)"
                 " VALUES (%s, 'agent', 'bootstrap_backlog', 'score_runs', %s, %s)",
                 (now, run_id and str(run_id), Jsonb({"count": len(briefs)})))
-        # no run, no freeze: a list is never frozen from stale or missing scores
-        if run_id and week.weekday() == 0:
-            freeze_week(conn, tid, run_id, week, now, cfg)
+        # no run, no freeze: a list is never frozen from stale or missing scores. Monday
+        # freezes; a later day catches up a week whose Monday sweep never ran (went dead)
+        monday = week - timedelta(days=week.weekday())
+        last = conn.execute("SELECT max(week_start) AS w FROM worklists").fetchone()["w"]
+        if run_id and (week == monday or (last is not None and last < monday)):
+            freeze_week(conn, tid, run_id, monday, now, cfg)
         _enqueue_briefs(conn, tid, briefs)
         check_freshness(conn, now, cfg["freshness_hours"])
 

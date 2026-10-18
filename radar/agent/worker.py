@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from radar import clock
 from radar.agent import jobs
@@ -40,7 +41,7 @@ def schedule(db: Database, now: datetime) -> None:
     """Enqueue each tenant's periodic jobs once per period: feed_tick per UTC minute,
     sla_check per UTC hour, and daily_sweep once its local day reaches sweep_hour_local.
     Per tenant, so one tenant's failure leaves the others' work running. A periodic job
-    still queued absorbs the next one (same dedupe key)."""
+    still queued absorbs the next one (same dedupe key); a sweep takes the newer period."""
     utc = now.astimezone(UTC)
     with db.system_tx() as conn:
         for t in conn.execute("SELECT id, config FROM tenants ORDER BY slug").fetchall():
@@ -52,8 +53,13 @@ def schedule(db: Database, now: datetime) -> None:
             period = local.date().isoformat()
             if (local.hour >= t["config"]["sweep_hour_local"]
                     and jobs.once_per_period(conn, t["id"], "daily_sweep", period)):
-                jobs.enqueue(conn, "daily_sweep", t["id"], {"period": period},
-                             dedupe_key="daily_sweep", lane=1, run_at=now)
+                if jobs.enqueue(conn, "daily_sweep", t["id"], {"period": period},
+                                dedupe_key="daily_sweep", lane=1, run_at=now) is None:
+                    # absorbed by a sweep still queued: it runs for the newer day, so a
+                    # Monday absorbed into Sunday's job still freezes the week
+                    conn.execute("UPDATE jobs SET payload = %s WHERE tenant_id = %s"
+                                 " AND dedupe_key = 'daily_sweep' AND status = 'queued'",
+                                 (Jsonb({"period": period}), t["id"]))
 
 
 def tick(db: Database, worker_id: str, now: datetime) -> int:
