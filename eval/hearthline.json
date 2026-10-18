@@ -27,33 +27,33 @@
    "brier": null
   },
   "rules": {
-   "recall_at_k_arr": 0.5498515801355578,
-   "precision_at_k": 0.17933493562876013,
-   "lift_at_k": 2.0447248216133844,
+   "recall_at_k_arr": 0.5350660545808212,
+   "precision_at_k": 0.14219291350372862,
+   "lift_at_k": 1.6212422787519143,
    "roc_auc": 0.6942089003442058,
    "pr_auc": 0.18811558407028492,
    "brier": null
   },
   "model": {
-   "recall_at_k_arr": 0.6373797871635509,
-   "precision_at_k": 0.2133997724081726,
-   "lift_at_k": 2.433122191388908,
+   "recall_at_k_arr": 0.6140621218621598,
+   "precision_at_k": 0.19079730460205713,
+   "lift_at_k": 2.175415421702087,
    "roc_auc": 0.7682519326945513,
    "pr_auc": 0.29137624074716023,
    "brier": 0.07114085120494947
   },
   "oracle": {
-   "recall_at_k_arr": 0.7815957534376863,
-   "precision_at_k": 0.2751293287459682,
-   "lift_at_k": 3.136944654248902,
+   "recall_at_k_arr": 0.7759253831894524,
+   "precision_at_k": 0.27039448390674603,
+   "lift_at_k": 3.0829593293299076,
    "roc_auc": 0.8681483978553275,
    "pr_auc": 0.4603293762493599,
    "brier": 0.06051168657114071
   },
   "gbm": {
-   "recall_at_k_arr": 0.4461819053170135,
-   "precision_at_k": 0.18312379378872773,
-   "lift_at_k": 2.0879242813176306,
+   "recall_at_k_arr": 0.4975610991421252,
+   "precision_at_k": 0.19019467133202023,
+   "lift_at_k": 2.1685443722813247,
    "roc_auc": 0.6944959231401303,
    "pr_auc": 0.20316539362279484,
    "brier": 0.07924007385663757
@@ -77,35 +77,35 @@
     "hi": 0.5086781949651283
    },
    "rules": {
-    "diff": 0.5498515801355578,
-    "lo": 0.465536888603942,
-    "hi": 0.6233514207804457
+    "diff": 0.5350660545808212,
+    "lo": 0.4486932323011287,
+    "hi": 0.6098843769808889
    },
    "model": {
-    "diff": 0.6373797871635509,
-    "lo": 0.5586311921964903,
-    "hi": 0.7037856700122345
+    "diff": 0.6140621218621598,
+    "lo": 0.528783781186023,
+    "hi": 0.6802533707353455
    },
    "oracle": {
-    "diff": 0.7815957534376863,
-    "lo": 0.7182492176725784,
-    "hi": 0.8357225435662886
+    "diff": 0.7759253831894524,
+    "lo": 0.7114619205219704,
+    "hi": 0.8280281948883117
    },
    "gbm": {
-    "diff": 0.4461819053170135,
-    "lo": 0.38430943879596835,
-    "hi": 0.512522516912731
+    "diff": 0.4975610991421252,
+    "lo": 0.42142303621175914,
+    "hi": 0.5718420701222626
    }
   },
   "model_minus_renewal_sort": {
-   "diff": 0.48990362179692126,
-   "lo": 0.39533289396984006,
-   "hi": 0.5742427120629325
+   "diff": 0.46658595649553014,
+   "lo": 0.36979935145232007,
+   "hi": 0.5523414258701095
   },
   "model_minus_rules": {
-   "diff": 0.08752820702799313,
-   "lo": 0.03664637707310833,
-   "hi": 0.1380686633140829
+   "diff": 0.07899606728133857,
+   "lo": 0.029124009589626885,
+   "hi": 0.1292547546233928
   }
  },
  "reliability": {
@@ -224,79 +224,80 @@
  },
  "lead_time": {
   "decisions": 190,
-  "flagged": 139,
-  "median_weeks": 12.47738425925926,
-  "share_6w": 0.6368421052631579
+  "flagged": 127,
+  "median_weeks": 12.099074074074075,
+  "share_6w": 0.5789473684210527
  },
  "hindsight_vs_pit": {
   "pit_auc": 0.7682519326945513,
   "hindsight_auc": 0.7690315965418677,
   "naive_auc": 0.9837839845618537,
-  "pit_recall_at_k_arr": 0.6373797871635509,
-  "naive_recall_at_k_arr": 0.9859238396909221
+  "pit_recall_at_k_arr": 0.6140621218621598,
+  "hindsight_recall_at_k_arr": 0.618746691069994,
+  "naive_recall_at_k_arr": 0.985820824805147
  },
  "ablation": {
   "product": {
-   "recall_at_k_arr": 0.504867472863242,
-   "delta": -0.13251231430030896
+   "recall_at_k_arr": 0.5619070916172046,
+   "delta": -0.05215503024495516
   },
   "zendesk": {
-   "recall_at_k_arr": 0.6146344919059941,
-   "delta": -0.022745295257556863
+   "recall_at_k_arr": 0.5849661263659234,
+   "delta": -0.029095995496236426
   },
   "gmail": {
-   "recall_at_k_arr": 0.6246389321772473,
-   "delta": -0.012740854986303618
+   "recall_at_k_arr": 0.5969045092321117,
+   "delta": -0.017157612630048114
   },
   "billing": {
-   "recall_at_k_arr": 0.5240394669653601,
-   "delta": -0.11334032019819085
+   "recall_at_k_arr": 0.5232042850983158,
+   "delta": -0.09085783676384396
   },
   "crm": {
-   "recall_at_k_arr": 0.605904577920235,
-   "delta": -0.03147520924331593
+   "recall_at_k_arr": 0.5825013999193775,
+   "delta": -0.031560721942782255
   }
  },
  "c_sensitivity": {
-  "0.1": 0.6375211520310792,
-  "1.0": 0.6373797871635509,
-  "10.0": 0.6373797871635509
+  "0.1": 0.6135520410327112,
+  "1.0": 0.6140621218621598,
+  "10.0": 0.6140621218621598
  },
  "outage_week": {
   "outage_week": "2025-11-17 00:00:00+00:00",
-  "outage_max_new": 5,
+  "outage_max_new": 3,
   "median_max_new": 3.0,
   "by_week": {
-   "2025-11-10": 4,
-   "2025-11-17": 5,
+   "2025-11-10": 3,
+   "2025-11-17": 3,
    "2025-11-24": 3,
-   "2025-12-01": 3,
-   "2025-12-08": 5,
+   "2025-12-01": 4,
+   "2025-12-08": 3,
    "2025-12-15": 3,
-   "2025-12-22": 3,
+   "2025-12-22": 2,
    "2025-12-29": 3,
-   "2026-01-05": 5,
-   "2026-01-12": 4,
+   "2026-01-05": 4,
+   "2026-01-12": 3,
    "2026-01-19": 3,
-   "2026-01-26": 4,
+   "2026-01-26": 2,
    "2026-02-02": 3,
-   "2026-02-09": 3,
+   "2026-02-09": 4,
    "2026-02-16": 4,
    "2026-02-23": 3,
    "2026-03-02": 3,
-   "2026-03-09": 4,
+   "2026-03-09": 3,
    "2026-03-16": 4,
    "2026-03-23": 3,
-   "2026-03-30": 4,
-   "2026-04-06": 5,
+   "2026-03-30": 2,
+   "2026-04-06": 3,
    "2026-04-13": 3,
-   "2026-04-20": 3,
+   "2026-04-20": 2,
    "2026-04-27": 4,
-   "2026-05-04": 4,
+   "2026-05-04": 3,
    "2026-05-11": 3,
    "2026-05-18": 2,
-   "2026-05-25": 2,
-   "2026-06-01": 5,
+   "2026-05-25": 3,
+   "2026-06-01": 4,
    "2026-06-08": 4
   }
  },
@@ -395,91 +396,91 @@
  "by_cause": {
   "acquired": {
    "decisions": 6,
-   "recall_at_k_arr": 0.249363618562757,
+   "recall_at_k_arr": 0.1707460348541218,
    "random_recall": 0.2504245991778649,
    "unforecastable": true
   },
   "brokerage_switch": {
    "decisions": 3,
-   "recall_at_k_arr": 0.0,
+   "recall_at_k_arr": 0.09434951252751861,
    "random_recall": 0.28150797630392543,
    "unforecastable": true
   },
   "business_closed": {
    "decisions": 4,
-   "recall_at_k_arr": 0.41530054644808745,
+   "recall_at_k_arr": 0.30601092896174864,
    "random_recall": 0.2499753227602846,
    "unforecastable": true
   },
   "competitor": {
    "decisions": 18,
-   "recall_at_k_arr": 0.6054289188402322,
+   "recall_at_k_arr": 0.608073161959891,
    "random_recall": 0.24780697807712695,
    "unforecastable": false
   },
   "crm_sync": {
    "decisions": 11,
-   "recall_at_k_arr": 0.8458081394165191,
+   "recall_at_k_arr": 0.7608970052321912,
    "random_recall": 0.25815626131435493,
    "unforecastable": false
   },
   "data_accuracy": {
    "decisions": 14,
-   "recall_at_k_arr": 0.6291386458628259,
+   "recall_at_k_arr": 0.6349553863016464,
    "random_recall": 0.2417964174773665,
    "unforecastable": false
   },
   "deliverability_10dlc": {
    "decisions": 14,
-   "recall_at_k_arr": 0.5682347960352643,
+   "recall_at_k_arr": 0.6387757135030134,
    "random_recall": 0.2439593883618346,
    "unforecastable": false
   },
   "feature_gap": {
    "decisions": 11,
-   "recall_at_k_arr": 0.4189393497323707,
+   "recall_at_k_arr": 0.2855172486963349,
    "random_recall": 0.2655096097477691,
    "unforecastable": false
   },
   "lead_quality": {
    "decisions": 9,
-   "recall_at_k_arr": 0.9767675985441029,
+   "recall_at_k_arr": 0.9380469294509409,
    "random_recall": 0.27616241159304256,
    "unforecastable": false
   },
   "onboarding_training": {
    "decisions": 37,
-   "recall_at_k_arr": 0.643009259682865,
+   "recall_at_k_arr": 0.6197765598265182,
    "random_recall": 0.25936838577457366,
    "unforecastable": false
   },
   "price_roi": {
    "decisions": 15,
-   "recall_at_k_arr": 0.6359145908734108,
+   "recall_at_k_arr": 0.6489317769912171,
    "random_recall": 0.2548921370034178,
    "unforecastable": false
   },
   "product_bugs": {
    "decisions": 17,
-   "recall_at_k_arr": 0.7666059316523276,
+   "recall_at_k_arr": 0.676448623943003,
    "random_recall": 0.24737659015328037,
    "unforecastable": false
   },
   "team_dissolved": {
    "decisions": 8,
-   "recall_at_k_arr": 0.14694514280142906,
+   "recall_at_k_arr": 0.11692236978640723,
    "random_recall": 0.24058456727217142,
    "unforecastable": true
   },
   "team_downsized": {
    "decisions": 23,
-   "recall_at_k_arr": 0.8137147015336652,
+   "recall_at_k_arr": 0.7622698565856286,
    "random_recall": 0.2821603980559682,
    "unforecastable": false
   },
   "all unforecastable": {
    "decisions": 21,
-   "recall_at_k_arr": 0.19320162953217324,
+   "recall_at_k_arr": 0.155380789573826,
    "random_recall": 0.25056946786877343,
    "unforecastable": true
   }
@@ -497,120 +498,140 @@
      "as_of": "2026-03-09 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-03-16 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-03-23 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-03-30 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-04-06 00:00:00+00:00",
      "renewal_sort": 34,
-     "model": 11,
+     "model": null,
+     "below_floor": true,
      "book_size": 36
     },
     {
      "as_of": "2026-04-13 00:00:00+00:00",
      "renewal_sort": 32,
-     "model": 10,
+     "model": null,
+     "below_floor": true,
      "book_size": 38
     },
     {
      "as_of": "2026-04-20 00:00:00+00:00",
      "renewal_sort": 31,
-     "model": 9,
+     "model": null,
+     "below_floor": true,
      "book_size": 39
     },
     {
      "as_of": "2026-04-27 00:00:00+00:00",
      "renewal_sort": 30,
-     "model": 6,
+     "model": 10,
+     "below_floor": false,
      "book_size": 40
     },
     {
      "as_of": "2026-05-04 00:00:00+00:00",
      "renewal_sort": 26,
      "model": 5,
+     "below_floor": false,
      "book_size": 42
     },
     {
      "as_of": "2026-05-11 00:00:00+00:00",
      "renewal_sort": 25,
      "model": 3,
+     "below_floor": false,
      "book_size": 43
     },
     {
      "as_of": "2026-05-18 00:00:00+00:00",
      "renewal_sort": 24,
      "model": 3,
+     "below_floor": false,
      "book_size": 44
     },
     {
      "as_of": "2026-05-25 00:00:00+00:00",
      "renewal_sort": 23,
      "model": 3,
+     "below_floor": false,
      "book_size": 45
     },
     {
      "as_of": "2026-06-01 00:00:00+00:00",
      "renewal_sort": 18,
      "model": 3,
+     "below_floor": false,
      "book_size": 41
     },
     {
      "as_of": "2026-06-08 00:00:00+00:00",
      "renewal_sort": 17,
      "model": 1,
+     "below_floor": false,
      "book_size": 43
     },
     {
      "as_of": "2026-06-15 00:00:00+00:00",
      "renewal_sort": 15,
      "model": 1,
+     "below_floor": false,
      "book_size": 42
     },
     {
      "as_of": "2026-06-22 00:00:00+00:00",
      "renewal_sort": 13,
      "model": 1,
+     "below_floor": false,
      "book_size": 42
     },
     {
      "as_of": "2026-06-29 00:00:00+00:00",
      "renewal_sort": 11,
      "model": 1,
+     "below_floor": false,
      "book_size": 43
     },
     {
      "as_of": "2026-07-06 00:00:00+00:00",
      "renewal_sort": 10,
      "model": 6,
+     "below_floor": false,
      "book_size": 45
     },
     {
      "as_of": "2026-07-13 00:00:00+00:00",
      "renewal_sort": 9,
      "model": 5,
+     "below_floor": false,
      "book_size": 44
     },
     {
      "as_of": "2026-07-20 00:00:00+00:00",
      "renewal_sort": 9,
      "model": 5,
+     "below_floor": false,
      "book_size": 45
     }
    ]
@@ -626,120 +647,140 @@
      "as_of": "2026-03-30 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-04-06 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-04-13 00:00:00+00:00",
      "renewal_sort": null,
      "model": null,
+     "below_floor": false,
      "book_size": null
     },
     {
      "as_of": "2026-04-20 00:00:00+00:00",
      "renewal_sort": 32,
-     "model": "below floor",
+     "model": null,
+     "below_floor": true,
      "book_size": 32
     },
     {
      "as_of": "2026-04-27 00:00:00+00:00",
      "renewal_sort": 31,
-     "model": "below floor",
+     "model": null,
+     "below_floor": true,
      "book_size": 36
     },
     {
      "as_of": "2026-05-04 00:00:00+00:00",
      "renewal_sort": 30,
-     "model": "below floor",
+     "model": null,
+     "below_floor": true,
      "book_size": 37
     },
     {
      "as_of": "2026-05-11 00:00:00+00:00",
      "renewal_sort": 28,
-     "model": "below floor",
+     "model": null,
+     "below_floor": true,
      "book_size": 38
     },
     {
      "as_of": "2026-05-18 00:00:00+00:00",
      "renewal_sort": 26,
-     "model": 13,
+     "model": null,
+     "below_floor": true,
      "book_size": 36
     },
     {
      "as_of": "2026-05-25 00:00:00+00:00",
      "renewal_sort": 25,
-     "model": 8,
+     "model": 9,
+     "below_floor": false,
      "book_size": 35
     },
     {
      "as_of": "2026-06-01 00:00:00+00:00",
      "renewal_sort": 25,
      "model": 7,
+     "below_floor": false,
      "book_size": 36
     },
     {
      "as_of": "2026-06-08 00:00:00+00:00",
      "renewal_sort": 21,
      "model": 9,
+     "below_floor": false,
      "book_size": 35
     },
     {
      "as_of": "2026-06-15 00:00:00+00:00",
      "renewal_sort": 20,
      "model": 9,
+     "below_floor": false,
      "book_size": 36
     },
     {
      "as_of": "2026-06-22 00:00:00+00:00",
      "renewal_sort": 16,
      "model": 8,
+     "below_floor": false,
      "book_size": 34
     },
     {
      "as_of": "2026-06-29 00:00:00+00:00",
      "renewal_sort": 15,
      "model": 6,
+     "below_floor": false,
      "book_size": 35
     },
     {
      "as_of": "2026-07-06 00:00:00+00:00",
      "renewal_sort": 15,
      "model": 4,
+     "below_floor": false,
      "book_size": 36
     },
     {
      "as_of": "2026-07-13 00:00:00+00:00",
      "renewal_sort": 14,
      "model": 4,
+     "below_floor": false,
      "book_size": 38
     },
     {
      "as_of": "2026-07-20 00:00:00+00:00",
      "renewal_sort": 13,
      "model": 7,
+     "below_floor": false,
      "book_size": 38
     },
     {
      "as_of": "2026-07-27 00:00:00+00:00",
      "renewal_sort": 12,
-     "model": 7,
+     "model": 8,
+     "below_floor": false,
      "book_size": 40
     },
     {
      "as_of": "2026-08-03 00:00:00+00:00",
      "renewal_sort": 8,
-     "model": 8,
+     "model": 9,
+     "below_floor": false,
      "book_size": 39
     },
     {
      "as_of": "2026-08-10 00:00:00+00:00",
      "renewal_sort": 7,
-     "model": 4,
+     "model": 6,
+     "below_floor": false,
      "book_size": 38
     }
    ]
