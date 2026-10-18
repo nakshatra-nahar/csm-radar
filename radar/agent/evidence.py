@@ -94,7 +94,7 @@ def _label(e: dict, currency: str) -> tuple[str, str]:
     if t == "crm.opportunity_history":
         # shortcut: history rows carry no opportunity type and the CRM sync only sends renewal
         # opportunities (sim/crm.py); join to crm.opportunity's type if new business is synced
-        return "Renewal opportunity", status or ""
+        return "Renewal opportunity stage changed", status or ""
     if t == "crm.opportunity":
         return f"{a.get('type') or 'CRM'} opportunity", status or ""
     if t == "product.event":

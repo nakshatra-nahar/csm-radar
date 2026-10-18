@@ -519,7 +519,11 @@ def _event(type_, status=None, amount_minor=None, quantity=None, **attrs):
 def test_event_descriptions_use_plain_labels():
     def text(e, dated=False):
         return evidence.describe(e, "USD", cap=None, dated=dated)[0]
+    # a stage change reads differently from the opportunity row it changed (same day, same
+    # stage): the timeline would otherwise show two identical 'Closed Lost' rows
     assert text(_event("crm.opportunity_history", "Closed Lost", opp_id="006X")) \
+        == "Renewal opportunity stage changed: Closed Lost"
+    assert text(_event("crm.opportunity", "Closed Lost", type="Renewal")) \
         == "Renewal opportunity: Closed Lost"
     assert text(_event("email.message", direction="inbound")) == "Email from customer"
     assert text(_event("email.message", direction="outbound")) == "Email to customer"
