@@ -70,7 +70,7 @@ class World:
                        available or end + 3 * DAY, f"{version:04d}", active_users=active_users)
 
     def frames(self):
-        return frames_from_rows(self.events, self.links, self.accounts, [], self.users)
+        return frames_from_rows(self.events, self.links, self.accounts, self.users)
 
 
 def feats(w, at=T, slug="hearthline", **kw):

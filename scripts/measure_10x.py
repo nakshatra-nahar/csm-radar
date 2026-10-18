@@ -75,11 +75,7 @@ def _copy(f: Frames, k: int) -> Frames:
                         account_id=_remap(f.links["account_id"], k))
     ac = f.accounts.assign(id=_remap(f.accounts["id"], k),
                            sf_account_id=_tag(f.accounts["sf_account_id"], k))
-    co = f.contacts.assign(id=_remap(f.contacts["id"], k),
-                           account_id=_remap(f.contacts["account_id"], k),
-                           sf_contact_id=_tag(f.contacts["sf_contact_id"], k),
-                           email=_tag(f.contacts["email"], k))
-    return Frames(ev, ln, ac, co, f.users)  # users are not tiled: each book is n times larger
+    return Frames(ev, ln, ac, f.users)  # users are not tiled: each book is n times larger
 
 
 def _tile(f: Frames, n: int) -> Frames:
@@ -88,8 +84,7 @@ def _tile(f: Frames, n: int) -> Frames:
         ["entity_id", "occurred_at", "version_key"], kind="stable", ignore_index=True)
     ln = pd.concat([p.links for p in parts], ignore_index=True).sort_values(
         ["account_ref", "available_at", "id"], ignore_index=True)
-    return Frames(ev, ln, *(pd.concat([getattr(p, a) for p in parts], ignore_index=True)
-                            for a in ("accounts", "contacts")), f.users)
+    return Frames(ev, ln, pd.concat([p.accounts for p in parts], ignore_index=True), f.users)
 
 
 def tile(dsn: str, copies: int) -> dict:

@@ -48,11 +48,10 @@ class Frames:
     events: pd.DataFrame  # sorted by (entity_id, occurred_at, version_key)
     links: pd.DataFrame  # sorted by (account_ref, available_at, id)
     accounts: pd.DataFrame  # id, sf_account_id: the key crosswalk only, never its state
-    contacts: pd.DataFrame
     users: pd.DataFrame  # id, sf_user_id
 
 
-def frames_from_rows(events, links, accounts, contacts, users) -> Frames:
+def frames_from_rows(events, links, accounts, users) -> Frames:
     ev = pd.DataFrame(events, columns=EVENT_COLUMNS)
     for col in TIMES:  # renewal_date (a date) becomes UTC midnight
         ev[col] = pd.to_datetime(ev[col], utc=True)
@@ -64,7 +63,6 @@ def frames_from_rows(events, links, accounts, contacts, users) -> Frames:
                        ignore_index=True),
         ln.sort_values(["account_ref", "available_at", "id"], ignore_index=True),
         pd.DataFrame(accounts, columns=["id", "sf_account_id"]),
-        pd.DataFrame(contacts, columns=["id", "account_id", "sf_contact_id", "email"]),
         pd.DataFrame(users, columns=["id", "sf_user_id"]))
 
 
@@ -79,7 +77,6 @@ def load_frames(conn, tenant_id) -> Frames:
         q("SELECT id, account_ref, account_id, method, available_at FROM identity_links"
           " WHERE tenant_id = %s"),
         q("SELECT id, sf_account_id FROM accounts WHERE tenant_id = %s"),
-        q("SELECT id, account_id, sf_contact_id, email FROM contacts WHERE tenant_id = %s"),
         q("SELECT id, sf_user_id FROM users WHERE tenant_id = %s"))
 
 

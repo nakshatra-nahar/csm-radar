@@ -102,7 +102,7 @@ def test_naive_frames_show_todays_salesforce_row_at_every_snapshot():
         "entity_id": ["sf_account:A", "sf_account:A", "in_1"], "occurred_at": at,
         "available_at": at, "version_key": ["1", "2", "1"],
         "status": ["Customer", "Former Customer", "paid"]})
-    got = evaluate.naive_frames(Frames(events, None, None, None, None)).events
+    got = evaluate.naive_frames(Frames(events, None, None, None)).events
     crm = got[got["type"] == "crm.account"]
     assert crm["status"].tolist() == ["Former Customer"]
     assert crm["occurred_at"].tolist() == crm["available_at"].tolist() == [old]
@@ -345,8 +345,7 @@ def test_training_rows_are_settled_and_labelled_only_from_what_arrived_by_the_or
                            "decision_at": [settled + pd.Timedelta(days=30)] * 2,
                            "available_at": [origin + pd.Timedelta(days=1),  # arrives late
                                             settled + pd.Timedelta(days=31)]})
-    frames = Frames(events=events, links=events.iloc[:0], accounts=None, contacts=None,
-                    users=None)
+    frames = Frames(events=events, links=events.iloc[:0], accounts=None, users=None)
     def decided(f):  # churn_decisions' columns from the planted events that arrived
         never = f.events["decision_at"] + pd.NaT
         return f.events.assign(involuntary_at=never, merged=never)[
