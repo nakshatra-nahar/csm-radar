@@ -1,15 +1,13 @@
 """How we know it works (design §7): a rolling-origin backtest of the ranking policy against
 simple baselines and a latent-health oracle, on the same rows, rendered as a model card.
 
-Run as `uv run python -m radar.evaluate --tenant <slug>` (design §7's `radar eval`): it reads
+Run as `radar eval --tenant <slug> [--out docs]` (design §7): it reads
 the tenant from the configured database and the simulator truth from data/truth, and writes
 docs/model-card-<slug>.md and eval/<slug>.json.
 """
 
-import argparse
 import dataclasses
 import json
-import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -590,15 +588,17 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     return "\n".join(out)
 
 
-def _json(o):
-    return o.item() if isinstance(o, np.generic) else str(o)
+def to_json(result: dict) -> str:
+    """JSON with null for NaN and infinity (strict parsers reject the bare tokens)."""
+    text = json.dumps(result, default=lambda o: o.item() if isinstance(o, np.generic)
+                      else str(o))
+    return json.dumps(json.loads(text, parse_constant=lambda _: None), indent=1,
+                      allow_nan=False)
 
 
-def main(argv: list[str]) -> None:
-    """--tenant <slug>: evaluate a tenant already replayed into the configured database."""
-    parser = argparse.ArgumentParser(prog="radar eval")
-    parser.add_argument("--tenant", required=True)
-    slug = parser.parse_args(argv).tenant
+def write_report(slug: str, out: Path = Path("docs")) -> list[str]:
+    """Evaluate a tenant already replayed into the configured database: writes
+    out/model-card-<slug>.md and eval/<slug>.json; returns the acceptance violations."""
     settings = load_settings()
     db, tid = Database(settings.worker_dsn), tenant_id(slug)
     try:
@@ -609,12 +609,8 @@ def main(argv: list[str]) -> None:
         db.close()
     result = run(frames, tenant, load_truth(settings.data_dir, slug),
                  k=tenant["config"]["capacity_per_csm"])
-    Path("docs", f"model-card-{slug}.md").write_text(render_model_card(slug, result))
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"model-card-{slug}.md").write_text(render_model_card(slug, result))
     Path("eval").mkdir(exist_ok=True)
-    Path("eval", f"{slug}.json").write_text(json.dumps(result, indent=1, default=_json))
-    for violation in acceptance(result):
-        print("acceptance:", violation)
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])
+    Path("eval", f"{slug}.json").write_text(to_json(result))
+    return acceptance(result)

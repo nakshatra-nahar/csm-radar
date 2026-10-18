@@ -54,7 +54,9 @@ def feed_tick(db: Database, job: Job) -> None:
         for account in stats.triggers:
             jobs.enqueue(conn, "evaluate_rules", tid, {"account_id": str(account)},
                          dedupe_key=f"rules:{account}", lane=0)
-    feed.deliver_due(db, tid, clock.now(), load_settings().data_dir, on_batch=enqueue_rules)
+    settings = load_settings()
+    feed.deliver_due(db, tid, clock.now(), settings.data_dir, on_batch=enqueue_rules,
+                     from_db=settings.feed_source == "db")
 
 
 def evaluate_rules(db: Database, job: Job) -> None:
@@ -179,6 +181,19 @@ def _write_digests(conn, week_start: date, now: datetime) -> None:
                  "Past due (escalated since your last digest):", *(late or ["  none"])], now)
 
 
+def freeze_week(conn, tenant_id, run_id, week_start: date, now: datetime, cfg: dict) -> None:
+    """Freeze the week's lists from the run, send the digests and queue a brief per frozen
+    model slot. Lists already frozen for the week are left alone."""
+    _lock(conn, tenant_id)  # re-entrant: the daily sweep already holds it
+    if not policy.freeze_worklists(conn, tenant_id, run_id, week_start, now, cfg):
+        return
+    _write_digests(conn, week_start, now)
+    _enqueue_briefs(conn, tenant_id, [r["case_id"] for r in conn.execute(
+        "SELECT i.case_id FROM worklist_items i JOIN worklists w ON w.id = i.worklist_id"
+        " WHERE w.week_start = %s AND w.frozen_at = %s AND i.kind = 'model'",
+        (week_start, now))])
+
+
 def daily_sweep(db: Database, job: Job) -> None:
     """Score every account, recheck every rule, open cases, and on the tenant's Monday freeze
     the lists and send the digests; briefs for new cases and frozen model slots. The day is
@@ -208,13 +223,8 @@ def daily_sweep(db: Database, job: Job) -> None:
                 " VALUES (%s, 'agent', 'bootstrap_backlog', 'score_runs', %s, %s)",
                 (now, run_id and str(run_id), Jsonb({"count": len(briefs)})))
         # no run, no freeze: a list is never frozen from stale or missing scores
-        if (run_id and week.weekday() == 0
-                and policy.freeze_worklists(conn, tid, run_id, week, now, cfg)):
-            _write_digests(conn, week, now)
-            briefs += [r["case_id"] for r in conn.execute(
-                "SELECT i.case_id FROM worklist_items i JOIN worklists w"
-                " ON w.id = i.worklist_id WHERE w.week_start = %s AND w.frozen_at = %s"
-                " AND i.kind = 'model'", (week, now))]
+        if run_id and week.weekday() == 0:
+            freeze_week(conn, tid, run_id, week, now, cfg)
         _enqueue_briefs(conn, tid, briefs)
         check_freshness(conn, now, cfg["freshness_hours"])
 

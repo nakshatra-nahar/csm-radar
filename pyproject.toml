@@ -20,6 +20,9 @@ dependencies = [
     "markdown",
 ]
 
+[project.scripts]
+radar = "radar.cli:main"
+
 [dependency-groups]
 dev = ["pytest", "ruff", "httpx"]
 

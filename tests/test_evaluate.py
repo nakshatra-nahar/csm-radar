@@ -1,5 +1,7 @@
 """Rolling-origin evaluation and model card (design §7) on a scale-0.2 hearthline world."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -160,3 +162,10 @@ def test_model_card_has_sections_in_order(eval_result):
     p = eval_result["policies"]
     if p["renewal_sort"]["recall_at_k_arr"] < p["random"]["recall_at_k_arr"]:
         assert "already announced" in card  # why the renewal sort loses to random
+
+
+def test_eval_json_writes_null_for_nan():
+    out = evaluate.to_json({"a": float("nan"), "b": [np.float64("nan"), np.int64(3)],
+                            "c": float("inf")})
+    assert json.loads(out) == {"a": None, "b": [None, 3], "c": None}
+    assert "NaN" not in out and "Infinity" not in out

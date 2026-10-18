@@ -446,14 +446,15 @@ def test_tick_claims_jobs_due_at_its_now(empty, monkeypatch):
     assert (job["status"], job["finished_at"]) == ("done", later)
 
 
-def test_run_forever_survives_a_database_error(monkeypatch):
+@pytest.mark.parametrize("error", ["OperationalError", "InterfaceError"])
+def test_run_forever_survives_a_database_error(monkeypatch, error):
     import psycopg
     stop, calls = threading.Event(), []
 
     def tick(db, worker_id, now):
         calls.append(now)
         if len(calls) == 1:
-            raise psycopg.OperationalError("server closed the connection unexpectedly")
+            raise getattr(psycopg, error)("server closed the connection unexpectedly")
         stop.set()
         return 0
     monkeypatch.setattr(worker, "tick", tick)

@@ -19,6 +19,7 @@ class Settings:
     anthropic_api_key: str | None
     llm_model: str
     data_dir: Path
+    feed_source: str  # 'files' (data_dir/feed) or 'db' (feed_buffer, for serverless)
     webhook_secrets: dict[str, str]  # key id -> secret
     tick_secret: str | None  # bearer for /internal/tick; None disables the endpoint
     tick_budget_s: float
@@ -37,6 +38,9 @@ def load_settings() -> Settings:
     owner_dsn = env("RADAR_OWNER_DSN", "postgresql://postgres:postgres@localhost:54329/radar")
     web_password = env("RADAR_WEB_PASSWORD", "radar_web")
     worker_password = env("RADAR_WORKER_PASSWORD", "radar_worker")
+    feed_source = env("FEED_SOURCE", "files")
+    if feed_source not in ("files", "db"):
+        raise ValueError(f"FEED_SOURCE must be 'files' or 'db', not {feed_source!r}")
     return Settings(
         owner_dsn=owner_dsn,
         web_dsn=env("RADAR_WEB_DSN")
@@ -50,6 +54,7 @@ def load_settings() -> Settings:
         anthropic_api_key=env("ANTHROPIC_API_KEY") or None,
         llm_model=env("RADAR_LLM_MODEL", "claude-haiku-5-5"),
         data_dir=Path(env("RADAR_DATA_DIR", "data")),
+        feed_source=feed_source,
         webhook_secrets=_parse_secrets(env("RADAR_WEBHOOK_SECRETS", "")),
         # Vercel cron sends CRON_SECRET; deployments set both names to the same value
         tick_secret=env("TICK_SECRET") or env("CRON_SECRET") or None,

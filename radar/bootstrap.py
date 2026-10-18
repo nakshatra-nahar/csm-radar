@@ -1,9 +1,12 @@
-"""Bootstrap a demo database: tenants, staff, the feed replayed up to a point in time, a
-first model per tenant and a history of weekly score runs."""
+"""Bootstrap a demo database (design §10): tenants, staff, the feed replayed up to now, a
+first model per tenant, a history of weekly score runs, the first sweep, this week's lists
+and their briefs, and the rest of the feed buffered in the database. Idempotent."""
 
+import math
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -11,13 +14,17 @@ from psycopg.types.json import Jsonb
 from sklearn.linear_model import LogisticRegression
 
 from radar import clock, model
+from radar.agent import jobs, worker
+from radar.agent.handlers import freeze_week
 from radar.asof import load_frames
+from radar.config import Settings
 from radar.db import Database, owner_connect
 from radar.ingest import feed
 from radar.ingest.pipeline import IngestStats
 from radar.labels import MATURITY, build_training_set, snapshot_grid
+from radar.migrate import migrate
 from radar.scoring import score_tenant
-from radar.sim import staff
+from radar.sim import generate, staff
 from radar.tenants import TENANTS, runtime_config, tenant_id
 
 HISTORY_END = datetime(2026, 10, 17, tzinfo=UTC)  # the generator's default "now"
@@ -25,17 +32,36 @@ CALIBRATION_WEEKS = 8
 ECE_MAX, ECE_MIN_ROWS = 0.02, 300  # design §6: Platt only past this error, on enough rows
 
 
+def merge_config(defaults: dict, stored: dict) -> dict:
+    """Stored values win; keys only in the defaults are added, at any depth."""
+    return defaults | {k: merge_config(defaults[k], v)
+                       if isinstance(v, dict) and isinstance(defaults.get(k), dict) else v
+                       for k, v in stored.items()}
+
+
 def seed_tenants_and_users(owner_dsn: str, db: Database, slugs: list[str], seed: int = 7) -> None:
-    """Idempotent. Tenants go in as the owner: the app roles may not insert tenants."""
-    with owner_connect(owner_dsn, autocommit=True) as conn:
+    """Idempotent. Tenants go in as the owner: the app roles may not insert tenants. An
+    existing tenant's config gains the config keys added since it was seeded (a new
+    config_version when that changes it)."""
+    with owner_connect(owner_dsn) as conn:
         for slug in slugs:
             spec, config = TENANTS[slug], runtime_config(slug)
-            conn.execute(
-                "INSERT INTO tenants (id, slug, name, timezone, currency, internal_domain,"
-                " config, config_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-                " ON CONFLICT (id) DO NOTHING",
-                (tenant_id(slug), slug, spec.name, spec.timezone, spec.currency,
-                 spec.internal_domain, Jsonb(config), config["config_version"]))
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO tenants (id, slug, name, timezone, currency, internal_domain,"
+                    " config, config_version) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (id) DO NOTHING",
+                    (tenant_id(slug), slug, spec.name, spec.timezone, spec.currency,
+                     spec.internal_domain, Jsonb(config), config["config_version"]))
+                stored, version = conn.execute(
+                    "SELECT config, config_version FROM tenants WHERE id = %s FOR UPDATE",
+                    (tenant_id(slug),)).fetchone()
+                merged = merge_config(config, stored)
+                if merged != stored:
+                    merged["config_version"] = version + 1
+                    conn.execute("UPDATE tenants SET config = %s, config_version = %s"
+                                 " WHERE id = %s", (Jsonb(merged), merged["config_version"],
+                                                    tenant_id(slug)))
     for slug in slugs:
         with db.tenant_tx(tenant_id(slug)) as conn:
             for user in staff(slug, seed):  # managers come first, so their ids exist
@@ -122,4 +148,62 @@ def backfill_runs(db: Database, tenant_id, weeks: int = 12, *, end: datetime) ->
     """One non-actionable score run per Monday for the `weeks` Mondays up to end, so history
     and "what changed" work from the first day."""
     mondays = snapshot_grid(end - timedelta(weeks=weeks), end)[-weeks:]
-    return [score_tenant(db, tenant_id, T.to_pydatetime(), "backfill", False) for T in mondays]
+    with db.tenant_tx(tenant_id) as conn:
+        done = {r["as_of"] for r in conn.execute(
+            "SELECT as_of FROM score_runs WHERE trigger = 'backfill' AND status = 'done'")}
+    return [score_tenant(db, tenant_id, T.to_pydatetime(), "backfill", False)
+            for T in mondays if T.to_pydatetime() not in done]
+
+
+def _bootstrap_sweep(db: Database, tid, now: datetime) -> None:
+    """Queue the one actionable sweep that opens the backlog past the breaker (Ruling AB).
+    Its dedupe key absorbs the day's scheduled sweep while it waits."""
+    with db.tenant_tx(tid) as conn:
+        if conn.execute("SELECT 1 FROM audit_log WHERE action = 'bootstrap_backlog'"
+                        " LIMIT 1").fetchone():
+            return
+        jobs.enqueue(conn, "daily_sweep", tid, {"bootstrap": True}, dedupe_key="daily_sweep",
+                     lane=1, run_at=now)
+
+
+def _freeze_this_week(db: Database, tid, now: datetime) -> None:
+    """Ruling AG: freeze the current ISO week from the latest actionable run even when today
+    is not Monday, so the app shows a frozen list on day one."""
+    with db.tenant_tx(tid, actor="agent") as conn:
+        cfg = conn.execute("SELECT config FROM tenants WHERE id = %s",
+                           (tid,)).fetchone()["config"]
+        run = conn.execute("SELECT id FROM score_runs WHERE status = 'done' AND actionable"
+                           " ORDER BY as_of DESC, finished_at DESC LIMIT 1").fetchone()
+        if run:
+            today = now.astimezone(ZoneInfo(cfg["timezone"])).date()
+            freeze_week(conn, tid, run["id"], today - timedelta(days=today.weekday()), now, cfg)
+
+
+def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
+    """Each step skips what an earlier run already did, so a re-run adds nothing."""
+    now, slugs = clock.now(), list(TENANTS)
+    applied = migrate(settings.owner_dsn, settings.web_password, settings.worker_password)
+    db = Database(settings.worker_dsn)
+    try:
+        seed_tenants_and_users(settings.owner_dsn, db, slugs)
+        if not (settings.data_dir / "feed").is_dir():
+            generate(settings.data_dir, seed=7, scale=scale)
+        ingested = {s: replay_feed(db, tenant_id(s), settings.data_dir, now).accepted
+                    for s in slugs}
+        for slug in slugs:
+            tid = tenant_id(slug)
+            with db.tenant_tx(tid) as conn:
+                trained = conn.execute("SELECT 1 FROM models LIMIT 1").fetchone()
+            if not trained:
+                train_and_promote(db, tid, now)
+            backfill_runs(db, tid, end=now)
+            _bootstrap_sweep(db, tid, now)
+        swept = worker.run_for(db, "bootstrap", budget_s=math.inf)  # until the queue is idle
+        for slug in slugs:
+            _freeze_this_week(db, tenant_id(slug), now)
+        briefs = worker.run_for(db, "bootstrap", budget_s=math.inf)
+        buffered = {s: feed.load_buffer(db, tenant_id(s), settings.data_dir) for s in slugs}
+    finally:
+        db.close()
+    return {"migrations": applied, "ingested": ingested, "buffered": buffered,
+            "jobs": swept["jobs"] + briefs["jobs"]}

@@ -104,7 +104,7 @@ def run_forever(db: Database, worker_id: str, stop: threading.Event,
     while not stop.is_set():
         try:
             ran = tick(db, worker_id, clock.now())
-        except psycopg.OperationalError:
+        except (psycopg.OperationalError, psycopg.InterfaceError):  # InterfaceError: conn closed
             failures += 1
             log.exception("tick failed (%d in a row); backing off", failures)
             stop.wait(min(MAX_BACKOFF_S, idle_sleep * 2**failures))

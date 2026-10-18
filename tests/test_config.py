@@ -1,3 +1,5 @@
+import pytest
+
 from radar.config import load_settings
 
 
@@ -25,3 +27,13 @@ def test_tick_secret_reads_either_env_name_and_budget_defaults(monkeypatch):
     monkeypatch.setenv("RADAR_ENV", "production")
     s = load_settings()
     assert (s.tick_secret, s.tick_budget_s, s.production) == ("t1", 30.0, True)
+
+
+def test_feed_source_is_files_or_db(monkeypatch):
+    monkeypatch.delenv("FEED_SOURCE", raising=False)
+    assert load_settings().feed_source == "files"
+    monkeypatch.setenv("FEED_SOURCE", "db")
+    assert load_settings().feed_source == "db"
+    monkeypatch.setenv("FEED_SOURCE", "s3")
+    with pytest.raises(ValueError, match="FEED_SOURCE"):
+        load_settings()
