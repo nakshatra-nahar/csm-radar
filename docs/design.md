@@ -213,7 +213,7 @@ When an SF account or contact arrives, quarantined items for that tenant are ret
 - `events (tenant_id, account_ref, occurred_at) INCLUDE (available_at, type)`
 - `events (tenant_id, entity_id, occurred_at)`
 - `events (tenant_id, available_at)`
-- `identity_links (tenant_id, source, external_id, available_at DESC)`
+- `identity_links (tenant_id, account_ref, available_at DESC, id DESC)` (lookups do not know the source)
 - `account_scores (tenant_id, account_id, as_of DESC)`
 - `jobs (lane, run_at, id) WHERE status = 'queued'`
 - `jobs (tenant_id, dedupe_key) UNIQUE NULLS NOT DISTINCT WHERE status = 'queued' AND dedupe_key IS NOT NULL`
@@ -525,7 +525,7 @@ Later tasks may add columns or tables only through new migration files (`005_*.s
 - `source_status(tenant_id, source, feed_offset bigint DEFAULT 0, last_deliver_at, last_ingest_at, counters jsonb DEFAULT '{}')`; PRIMARY KEY (tenant_id, source).
 
 002_scoring
-- `models(tenant_id, id uuid, version int, status CHECK (candidate|active|retired|rejected), algorithm DEFAULT 'logreg', artifact jsonb, manifest jsonb, label_version, train_window jsonb, metrics jsonb, model_card_md text, trained_at, promoted_at NULL, promoted_by NULL)`; PK; UNIQUE(tenant_id, version); UNIQUE(tenant_id) WHERE status = 'active'.
+- `models(tenant_id, id uuid, version int, status CHECK (candidate|active|retired|rejected), artifact jsonb, manifest jsonb, label_version, train_window jsonb, metrics jsonb, trained_at, promoted_at NULL, promoted_by NULL)`; PK; UNIQUE(tenant_id, version); UNIQUE(tenant_id) WHERE status = 'active'.
 - `score_runs(tenant_id, id uuid, model_id uuid NULL, trigger CHECK (sweep|backfill|event|manual), actionable bool, as_of, watermarks jsonb, crosswalk_watermark timestamptz, config_version int, manifest jsonb, code_version text, status CHECK (running|done|failed), started_at, finished_at NULL, n_scored int)`; PK; FK model.
 - `account_scores(tenant_id, run_id uuid, account_id uuid, as_of, eligible bool, p double NULL, logit double NULL, lift double NULL, rules_score double NULL, band text, rank_in_book int NULL, owner_user_id uuid NULL, arr_minor bigint NULL, expected_arr_at_risk_minor bigint NULL, features jsonb, contributions jsonb, context jsonb, coverage jsonb)`; PRIMARY KEY (tenant_id, run_id, account_id); FKs run, account.
 - `VIEW latest_scores WITH (security_invoker = true)`: rows of the latest `done` + `actionable` run per tenant.
@@ -533,12 +533,12 @@ Later tasks may add columns or tables only through new migration files (`005_*.s
 003_agent
 - `jobs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, payload jsonb, dedupe_key NULL, lane smallint DEFAULT 0, run_at DEFAULT now(), status CHECK (queued|running|done|dead) DEFAULT 'queued', attempts int DEFAULT 0, max_attempts int DEFAULT 5, lease_expires_at NULL, last_error NULL, created_at, finished_at NULL)`; UNIQUE (tenant_id, dedupe_key) NULLS NOT DISTINCT WHERE status = 'queued' AND dedupe_key IS NOT NULL (so system jobs with NULL tenant coalesce too; `ON CONFLICT` must repeat this exact predicate); index (lane, run_at, id) WHERE status = 'queued'. Policies: `radar_web` sees `tenant_id = current tenant`; `radar_worker` sees all.
 - `schedule_runs(id bigint IDENTITY PK, tenant_id uuid NULL, kind, period_key, created_at)`; UNIQUE NULLS NOT DISTINCT (tenant_id, kind, period_key); worker-only.
-- `cases(tenant_id, id uuid, account_id, kind, status CHECK (open|held|done|dismissed|snoozed|auto_closed), play, opened_at, opened_by text, owner_user_id NULL, sla_due_at NULL, escalated_at NULL, evidence_event_ids bigint[] DEFAULT '{}', outcome NULL, outcome_reason NULL, closed_at NULL, closed_by uuid NULL)`; PK; UNIQUE (tenant_id, account_id, kind) WHERE status IN ('open','held').
+- `cases(tenant_id, id uuid, account_id, kind, status CHECK (open|held|done|dismissed|auto_closed), play, opened_at, opened_by text, owner_user_id NULL, sla_due_at NULL, escalated_at NULL, evidence_event_ids bigint[] DEFAULT '{}', outcome NULL, outcome_reason NULL, closed_at NULL, closed_by uuid NULL)`; PK; UNIQUE (tenant_id, account_id, kind) WHERE status IN ('open','held').
 - `suppressions(tenant_id, id uuid, account_id, created_by uuid, reason, p_at_dismiss double NULL, created_at, lifted_at NULL, lifted_reason NULL)`; PK.
 - `worklists(tenant_id, id uuid, user_id, week_start date, run_id uuid, frozen_at, viewed_at NULL)`; PK; UNIQUE(tenant_id, user_id, week_start).
 - `worklist_items(tenant_id, id uuid, worklist_id, account_id, position int, kind CHECK (must_act|check_in|model), reason text, p double NULL, expected_arr_at_risk_minor bigint NULL, case_id uuid NULL, added_at, new_since_monday bool DEFAULT false)`; PK; UNIQUE(tenant_id, worklist_id, account_id).
 - `briefs(tenant_id, id uuid, case_id, evidence_hash, prompt_version, status CHECK (pending|ready|failed), generator NULL, evidence jsonb, output jsonb NULL, validation jsonb NULL, created_at, updated_at)`; PK; UNIQUE(tenant_id, case_id, evidence_hash, prompt_version).
-- `llm_calls(tenant_id, id bigint IDENTITY, brief_id uuid, attempt int, model, request_id NULL, response_id NULL, stop_reason NULL, usage jsonb, cost_usd numeric(12,6), latency_ms int, ok bool, error NULL, created_at)`; PK.
+- `llm_calls(tenant_id, id bigint IDENTITY, brief_id uuid, attempt int, model, request_id NULL, stop_reason NULL, usage jsonb, cost_usd numeric(12,6), latency_ms int, ok bool, error NULL, created_at)`; PK.
 - `outbox(tenant_id, id uuid, case_id NULL, brief_id NULL, kind CHECK (customer_email|csm_digest|manager_digest), to_contact_id NULL, to_user_id NULL, subject, body, status CHECK (draft|approved|sent|cancelled), approved_by NULL, approved_at NULL, sent_at NULL, transport DEFAULT 'dry_run', created_at)`; PK.
 - `incidents(tenant_id, id uuid, kind CHECK (circuit_breaker|source_stale|manifest_mismatch), source NULL, details jsonb, opened_at, acknowledged_by NULL, acknowledged_at NULL, closed_at NULL)`; PK.
 - `audit_log(tenant_id, id bigint IDENTITY, at DEFAULT now(), actor text ('agent'|'system'|'user:<uuid>'), action, entity_type, entity_id text, before jsonb NULL, after jsonb NULL, reason NULL)`; PK. Written by AFTER INSERT/UPDATE triggers on cases, outbox, suppressions, models, incidents (actor from `current_setting('app.actor', true)`), plus explicit inserts.
