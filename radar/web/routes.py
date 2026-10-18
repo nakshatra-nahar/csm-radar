@@ -161,10 +161,11 @@ def edit_draft(request: Request, user: User, account_id: UUID, outbox_id: UUID,
         draft = queries.draft_of(conn, account_id, outbox_id)
         if draft is None:
             raise HTTPException(404)
-        if draft["status"] != "draft":
+        # the status guard is in the UPDATE too: an approve may commit after draft_of read it
+        if draft["status"] != "draft" or not conn.execute(
+                "UPDATE outbox SET subject = %s, body = %s WHERE id = %s AND status = 'draft'",
+                (subject.strip(), body, outbox_id)).rowcount:
             raise HTTPException(409, "This email is no longer a draft.")
-        conn.execute("UPDATE outbox SET subject = %s, body = %s WHERE id = %s",
-                     (subject.strip(), body, outbox_id))
     return _back(account_id)
 
 

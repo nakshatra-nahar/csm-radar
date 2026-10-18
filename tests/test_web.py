@@ -357,6 +357,30 @@ def test_draft_edit_then_approve_sends_the_filled_preview(web):
     assert other.post(f"{base}/drafts/{draft['id']}/approve").status_code == 404
 
 
+def test_edit_never_rewrites_an_email_sent_after_its_status_check(web, monkeypatch):
+    """A manager's approve can commit between edit's status read and its UPDATE: the edit
+    must then be a 409, not rewrite the text of an email already sent."""
+    from radar.web import queries
+    draft = one(web, "SELECT o.id, o.subject, c.account_id FROM outbox o JOIN cases c"
+                " ON c.id = o.case_id WHERE o.case_id = ANY(%s) AND o.status = 'draft'"
+                " AND o.kind = 'customer_email' AND c.status = 'open' ORDER BY o.id LIMIT 1",
+                web.cases)
+    real = queries.draft_of
+
+    def approved_meanwhile(conn, account_id, outbox_id):
+        row = real(conn, account_id, outbox_id)
+        web.owner.execute("UPDATE outbox SET status = 'sent', sent_at = now() WHERE id = %s",
+                          (outbox_id,))
+        return row
+    monkeypatch.setattr(queries, "draft_of", approved_meanwhile)
+    c = client_as(web, web.csm, raise_server_exceptions=False)
+    r = c.post(f"/accounts/{draft['account_id']}/drafts/{draft['id']}/edit",
+               data={"subject": "Changed", "body": "Changed"})
+    assert r.status_code == 409
+    assert one(web, "SELECT subject FROM outbox WHERE id = %s", draft["id"])["subject"] == (
+        draft["subject"])
+
+
 def post_webhook(c, body: bytes, secret: str, kid: str, header="stripe-signature"):
     sig = webhooks.sign(secret, kid, body, int(clock.now().timestamp()))
     return c.post("/webhooks/stripe", content=body, headers={header: sig})
