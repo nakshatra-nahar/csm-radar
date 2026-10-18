@@ -1,7 +1,9 @@
 """Bootstrap (design §10), the feed buffer (Ruling Y), prune (Ruling AM) and push (Ruling AT)."""
 
 import dataclasses
+import logging
 import os
+import subprocess
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -16,19 +18,40 @@ from psycopg.types.json import Jsonb
 from radar import clock, model
 from radar.agent import handlers
 from radar.agent.jobs import Job
-from radar.bootstrap import HISTORY_END, bootstrap, replay_feed, seed_tenants_and_users
+from radar.bootstrap import (
+    HISTORY_END,
+    _freeze_this_week,
+    bootstrap,
+    replay_feed,
+    seed_tenants_and_users,
+)
 from radar.cli import main
 from radar.config import load_settings
-from radar.db import Database, owner_connect
+from radar.db import Database, UnsafeRole, owner_connect
 from radar.ingest import feed
 from radar.ops import PushError, _tool, prune, push
 from radar.tenants import TENANTS, runtime_config, tenant_id
 from tests.conftest import ADMIN_DSN, WEB_PASSWORD, WORKER_PASSWORD, _role_dsn, fresh_database
 
 KITE = tenant_id("kitewire")
-# pg_dump/pg_restore must match the 16 test server; Homebrew puts 17 first on PATH
-PG_BIN = os.environ.get("RADAR_TEST_PG_BIN") or next(
-    (d for d in ["/opt/homebrew/opt/postgresql@16/bin"] if os.path.isdir(d)), None)
+
+
+def _pg16_bin() -> tuple[bool, str | None]:
+    """(found, pg_bin): a pg_dump and pg_restore 16, to match the 16 test server. Homebrew
+    puts 17 first on PATH, so try RADAR_TEST_PG_BIN, then Homebrew's 16, then PATH."""
+    for d in (os.environ.get("RADAR_TEST_PG_BIN"), "/opt/homebrew/opt/postgresql@16/bin", None):
+        try:
+            for name in ("pg_dump", "pg_restore"):
+                _tool(name, d, 16, 16)
+            return True, d
+        except (PushError, OSError, subprocess.CalledProcessError):
+            continue
+    return False, None
+
+
+HAVE_PG16, PG_BIN = _pg16_bin()
+needs_pg16 = pytest.mark.skipif(
+    not HAVE_PG16, reason="no PostgreSQL 16 pg_dump/pg_restore on PATH or RADAR_TEST_PG_BIN")
 
 
 @pytest.fixture
@@ -243,6 +266,7 @@ def empty_target():
             admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
 
 
+@needs_pg16
 def test_push_copies_every_row_once_and_refuses_a_loaded_target(booted, empty_target):
     def go(force=False):
         return push(empty_target, booted.dsn, WEB_PASSWORD, WORKER_PASSWORD, PG_BIN,
@@ -258,9 +282,64 @@ def test_push_copies_every_row_once_and_refuses_a_loaded_target(booted, empty_ta
     assert go(force=True) == source == table_counts(empty_target)
 
 
+@needs_pg16
 def test_push_refuses_a_client_tool_of_the_wrong_version():
     with pytest.raises(PushError, match="pass --pg-bin"):
         _tool("pg_dump", PG_BIN, 99, 99)
+
+
+def test_push_refuses_an_unparseable_client_version(tmp_path):
+    fake = tmp_path / "pg_dump"
+    fake.write_text("#!/bin/sh\necho 'pg_dump, some fork'\n")
+    fake.chmod(0o755)
+    with pytest.raises(PushError, match="cannot read the version"):
+        _tool("pg_dump", str(tmp_path), 16, 16)
+
+
+@pytest.fixture
+def plain_target():
+    """An empty database owned by a role that cannot bypass RLS: its dsn."""
+    name = f"radar_plain_{uuid.uuid4().hex[:8]}"
+    with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
+        admin.execute(f"CREATE ROLE {name} LOGIN PASSWORD 'plain'")
+        admin.execute(f"CREATE DATABASE {name} OWNER {name}")
+    try:
+        yield make_conninfo(ADMIN_DSN, dbname=name, user=name, password="plain")
+    finally:
+        with psycopg.connect(ADMIN_DSN, autocommit=True) as admin:
+            admin.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+            admin.execute(f"DROP ROLE IF EXISTS {name}")
+
+
+def test_push_refused_for_its_role_leaves_the_target_untouched(blank, plain_target):
+    with pytest.raises(PushError, match="cannot bypass row-level security"):
+        push(plain_target, blank[0], WEB_PASSWORD, WORKER_PASSWORD, PG_BIN)
+    assert one(plain_target, "SELECT count(*) AS n FROM pg_tables"
+               " WHERE schemaname = 'public'")["n"] == 0
+
+
+def test_bootstrap_refuses_an_unsafe_worker_dsn(blank, monkeypatch, small_world_dir):
+    dsn = blank[0]
+    monkeypatch.setenv("RADAR_OWNER_DSN", dsn)
+    monkeypatch.setenv("RADAR_WORKER_DSN", dsn)  # the owner: RLS would not bind the jobs
+    monkeypatch.setenv("RADAR_DATA_DIR", str(small_world_dir))
+    with pytest.raises(UnsafeRole):
+        bootstrap(load_settings())
+    assert one(dsn, "SELECT count(*) AS n FROM tenants")["n"] == 0
+
+
+def test_bootstrap_freeze_skips_a_run_from_an_earlier_week(booted, caplog):
+    """booted's latest actionable run is from the week of 2026-10-12; a week later there is no
+    run to freeze from, so the list is not frozen from stale scores."""
+    db = Database(booted.settings.worker_dsn)
+    try:
+        with caplog.at_level(logging.INFO, logger="radar.bootstrap"):
+            _freeze_this_week(db, tenant_id("hearthline"), HISTORY_END + timedelta(days=7))
+    finally:
+        db.close()
+    assert one(booted.dsn, "SELECT count(*) AS n FROM worklists"
+               " WHERE week_start = '2026-10-19'")["n"] == 0
+    assert [r.message for r in caplog.records if "no actionable run" in r.message] != []
 
 
 def test_train_retires_only_its_own_tenants_model(booted):

@@ -1,6 +1,6 @@
 """The radar console script."""
 
-import subprocess
+import pytest
 
 from radar import registry
 from radar.cli import main
@@ -9,8 +9,11 @@ COMMANDS = ("migrate", "seed", "sim", "bootstrap", "train", "eval", "dictionary"
             "worker", "tick", "prune", "push")
 
 
-def test_radar_help_lists_every_command():
-    out = subprocess.run(["radar", "--help"], capture_output=True, text=True, check=True).stdout
+def test_radar_help_lists_every_command(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        main(["--help"])
+    assert exit_.value.code == 0
+    out = capsys.readouterr().out
     assert all(c in out for c in COMMANDS)
 
 

@@ -545,6 +545,9 @@ Later tasks may add columns or tables only through new migration files (`005_*.s
 006_open_incident_idx
 - `incidents`: UNIQUE (tenant_id, kind, source) NULLS NOT DISTINCT WHERE closed_at IS NULL, so each kind (and source) has at most one open incident; writers repeat this predicate in `ON CONFLICT ... DO NOTHING`.
 
+007_feed_buffer
+- `feed_buffer(tenant_id, source, line_no bigint, deliver_at, line text)`; PRIMARY KEY (tenant_id, source, line_no); `radar_worker` may SELECT, INSERT, DELETE. The demo feed's not-yet-delivered lines, for a deployment with no persistent disk (`FEED_SOURCE=db`, Ruling Y); `line_no` is the byte offset past the line in its feed file, so it shares `source_status.feed_offset` with file delivery. A row is deleted in the transaction that delivers it.
+
 ## Appendix B: canonical event contract (ingestion produces, features consume)
 
 `account_ref` prefixes: `sf:`, `sf_opp:`, `stripe:`, `zd_org:`, `email:`, `ws:`. Identity methods: `sf_id`, `merge`, `sf_opportunity`, `stripe_metadata`, `zendesk_external_id`, `product_metadata`, `contact_email`, `domain`. Each tenant has an `internal_domain` (hearthline.io, tallyworks.co.uk, kitewire.dev) used to tell CSM addresses from customer addresses.

@@ -75,7 +75,10 @@ def _tool(name: str, pg_bin: str | None, source_major: int, target_major: int) -
         raise PushError(f"{name} not found on {'--pg-bin ' + pg_bin if pg_bin else 'PATH'}")
     out = subprocess.run([path, "--version"], capture_output=True, text=True,
                          check=True).stdout
-    major = int(re.search(r"\) (\d+)", out).group(1))
+    found = re.search(r"\) (\d+)", out)
+    if found is None:
+        raise PushError(f"cannot read the version of {path} from {out.strip()!r}")
+    major = int(found.group(1))
     if not source_major <= major <= target_major:
         raise PushError(f"{path} is version {major}; it must be {source_major} to"
                         f" {target_major} (source and target servers): pass --pg-bin")
@@ -111,12 +114,13 @@ def push(target: str, source: str, web_password: str, worker_password: str,
     with owner_connect(source) as src, owner_connect(target) as dst:
         majors = src.info.server_version // 10000, dst.info.server_version // 10000
         src_migrations = {r[0] for r in src.execute("SELECT name FROM schema_migrations")}
-    dump, restore = (_tool(name, pg_bin, *majors) for name in ("pg_dump", "pg_restore"))
-    migrate(target, web_password, worker_password)
-    with owner_connect(target, autocommit=True) as dst:
+        # checked before migrate, so a refused push leaves the target untouched
         if not dst.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles"
                            " WHERE rolname = current_user").fetchone()[0]:
             raise PushError("the target role cannot bypass row-level security")
+    dump, restore = (_tool(name, pg_bin, *majors) for name in ("pg_dump", "pg_restore"))
+    migrate(target, web_password, worker_password)
+    with owner_connect(target, autocommit=True) as dst:
         if {r[0] for r in dst.execute("SELECT name FROM schema_migrations")} != src_migrations:
             raise PushError("source and target schemas differ: run `radar migrate` on the source")
         if dst.execute("SELECT 1 FROM tenants LIMIT 1").fetchone():
@@ -124,23 +128,23 @@ def push(target: str, source: str, web_password: str, worker_password: str,
                 raise PushError("the target already holds tenant data; --force replaces it")
             dst.execute(sql.SQL("TRUNCATE {} CASCADE").format(sql.SQL(", ").join(
                 sql.Identifier(t) for t in _tables(dst) if t != "schema_migrations")))
-        audited = [r[0] for r in dst.execute(
-            "SELECT DISTINCT tgrelid::regclass::text FROM pg_trigger WHERE NOT tgisinternal")]
+        audited = [sql.Identifier(*r) for r in dst.execute(
+            "SELECT DISTINCT n.nspname, c.relname FROM pg_trigger t"
+            " JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE NOT t.tgisinternal")]
         with tempfile.TemporaryDirectory() as tmp:
             archive = str(Path(tmp) / "radar.dump")
             _run([dump, "--format=custom", "--data-only",
                   "--exclude-table-data=schema_migrations", "--file", archive], source)
             # restored rows already carry their audit_log rows: the triggers would add twins
             for t in audited:
-                dst.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(
-                    sql.Identifier(t)))
+                dst.execute(sql.SQL("ALTER TABLE {} DISABLE TRIGGER USER").format(t))
             try:
                 _run([restore, "--data-only", "--no-owner", "--no-privileges",
                       "--single-transaction", "--exit-on-error", archive], target)
             finally:
                 for t in audited:
-                    dst.execute(sql.SQL("ALTER TABLE {} ENABLE TRIGGER USER").format(
-                        sql.Identifier(t)))
+                    dst.execute(sql.SQL("ALTER TABLE {} ENABLE TRIGGER USER").format(t))
         dst.execute("ANALYZE")
         copied = _counts(dst)
     with owner_connect(source) as src:

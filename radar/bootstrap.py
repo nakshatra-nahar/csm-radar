@@ -2,8 +2,9 @@
 first model per tenant, a history of weekly score runs, the first sweep, this week's lists
 and their briefs, and the rest of the feed buffered in the database. Idempotent."""
 
+import logging
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -18,7 +19,7 @@ from radar.agent import jobs, worker
 from radar.agent.handlers import freeze_week
 from radar.asof import load_frames
 from radar.config import Settings
-from radar.db import Database, owner_connect
+from radar.db import Database, assert_role_safety, owner_connect
 from radar.ingest import feed
 from radar.ingest.pipeline import IngestStats
 from radar.labels import MATURITY, build_training_set, snapshot_grid
@@ -30,6 +31,7 @@ from radar.tenants import TENANTS, runtime_config, tenant_id
 HISTORY_END = datetime(2026, 10, 17, tzinfo=UTC)  # the generator's default "now"
 CALIBRATION_WEEKS = 8
 ECE_MAX, ECE_MIN_ROWS = 0.02, 300  # design §6: Platt only past this error, on enough rows
+log = logging.getLogger(__name__)
 
 
 def merge_config(defaults: dict, stored: dict) -> dict:
@@ -168,15 +170,24 @@ def _bootstrap_sweep(db: Database, tid, now: datetime) -> None:
 
 def _freeze_this_week(db: Database, tid, now: datetime) -> None:
     """Ruling AG: freeze the current ISO week from the latest actionable run even when today
-    is not Monday, so the app shows a frozen list on day one."""
+    is not Monday, so the app shows a frozen list on day one. Only a run from this local week
+    counts: a list is never frozen from stale or missing scores (as in daily_sweep)."""
     with db.tenant_tx(tid, actor="agent") as conn:
         cfg = conn.execute("SELECT config FROM tenants WHERE id = %s",
                            (tid,)).fetchone()["config"]
+        tz = ZoneInfo(cfg["timezone"])
+        today = now.astimezone(tz).date()
+        monday = today - timedelta(days=today.weekday())
+        start = datetime.combine(monday, time(), tz)
         run = conn.execute("SELECT id FROM score_runs WHERE status = 'done' AND actionable"
-                           " ORDER BY as_of DESC, finished_at DESC LIMIT 1").fetchone()
-        if run:
-            today = now.astimezone(ZoneInfo(cfg["timezone"])).date()
-            freeze_week(conn, tid, run["id"], today - timedelta(days=today.weekday()), now, cfg)
+                           " AND as_of >= %s AND as_of < %s"
+                           " ORDER BY as_of DESC, finished_at DESC LIMIT 1",
+                           (start, start + timedelta(weeks=1))).fetchone()
+        if run is None:
+            log.info("bootstrap: no actionable run in the week of %s for tenant %s;"
+                     " not freezing", monday, tid)
+            return
+        freeze_week(conn, tid, run["id"], monday, now, cfg)
 
 
 def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
@@ -185,6 +196,8 @@ def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
     applied = migrate(settings.owner_dsn, settings.web_password, settings.worker_password)
     db = Database(settings.worker_dsn)
     try:
+        with db.system_tx() as conn:  # as `radar worker`: never run jobs past RLS
+            assert_role_safety(conn)
         seed_tenants_and_users(settings.owner_dsn, db, slugs)
         if not (settings.data_dir / "feed").is_dir():
             generate(settings.data_dir, seed=7, scale=scale)
@@ -194,7 +207,7 @@ def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
             tid = tenant_id(slug)
             with db.tenant_tx(tid) as conn:
                 trained = conn.execute("SELECT 1 FROM models LIMIT 1").fetchone()
-            if not trained:
+            if not trained and TENANTS[slug].has_model:
                 train_and_promote(db, tid, now)
             backfill_runs(db, tid, end=now)
             _bootstrap_sweep(db, tid, now)
