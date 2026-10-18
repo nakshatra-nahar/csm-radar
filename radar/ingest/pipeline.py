@@ -270,9 +270,9 @@ class _Run:
             if ev.type == "support.ticket":
                 self.quarantine(rec, raw_id, "no_org")
             return None
-        if ref in self.memo:
-            return self.memo[ref]
         hints = _hints(ev)
+        if ref in self.memo and not hints.get("sf_account_id"):  # a named id may upgrade a link
+            return self.memo[ref]
         account_id, reason = identity.resolve_ref(self.conn, self.tenant_id, rec.source, ref,
                                                   hints, rec.at)
         if account_id is None:

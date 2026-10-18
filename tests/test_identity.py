@@ -113,3 +113,18 @@ def test_merge_maps_loser_to_master(worker_db, tenant):
     [row] = rows(worker_db, tid, "SELECT merged_into FROM accounts WHERE sf_account_id = %s",
                  loser["Id"])
     assert row["merged_into"] == account_id(worker_db, tid, master)
+
+
+def test_domain_link_upgrades_when_the_carrier_later_names_the_account(worker_db, tenant):
+    """A ref first matched by domain gets an exact link once a later version of its carrier
+    record (customer.updated) brings the Salesforce id; the crosswalk stays append-only."""
+    tid, slug = tenant
+    ingest(worker_db, tid, account(SF_ID, "clarkhome.com"))
+    later = T0 + timedelta(days=1)
+    ingest(worker_db, tid, stripe(CUSTOMER, slug, later, id="cus_up", email="ap@clarkhome.com",
+                                  metadata={}))
+    ingest(worker_db, tid, stripe(CUSTOMER, slug, later + timedelta(days=1), id="cus_up",
+                                  email="ap@clarkhome.com", metadata={"salesforce_id": SF_ID}))
+    sf_account = account_id(worker_db, tid, SF_ID)
+    assert [(r["account_id"], r["method"]) for r in links(worker_db, tid, "stripe:cus_up")] == [
+        (sf_account, "domain"), (sf_account, "stripe_metadata")]

@@ -58,12 +58,20 @@ def match_keys(account_ref: str, hints: dict) -> list[str]:
 
 def resolve_ref(conn, tenant_id, source: str, account_ref: str, hints: dict,
                 available_at: datetime) -> tuple[UUID | None, str | None]:
-    """(account id, None) when resolved, else (None, quarantine reason)."""
+    """(account id, None) when resolved, else (None, quarantine reason). A ref linked by the
+    domain heuristic is re-matched when its carrier record later names the account: an exact
+    key then appends an exact link."""
     row = conn.execute(
-        "SELECT account_id FROM identity_links WHERE tenant_id = %s AND account_ref = %s"
+        "SELECT account_id, method FROM identity_links WHERE tenant_id = %s AND account_ref = %s"
         " ORDER BY available_at DESC, id DESC LIMIT 1", (tenant_id, account_ref)).fetchone()
-    if row:
+    if row and not (row["method"] == "domain" and normalize_sf_id(hints.get("sf_account_id"))):
         return row["account_id"], None
+    if row:
+        found, method, _ = _match(conn, tenant_id, account_ref, hints)
+        if found is None:  # the named id is unknown: keep the domain link
+            return row["account_id"], None
+        link(conn, tenant_id, source, account_ref, found, method, available_at)
+        return found, None
     account_id, method, reason = _match(conn, tenant_id, account_ref, hints)
     if account_id is None:
         return None, reason
