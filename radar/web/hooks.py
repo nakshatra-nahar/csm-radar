@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from radar import clock
 from radar.agent import jobs, worker
-from radar.db import Database, UnsafeRole, assert_role_safety
+from radar.db import Database, UnsafeRole, open_checked
 from radar.ingest import feed, pipeline, webhooks
 
 router = APIRouter()
@@ -71,14 +71,7 @@ def _worker_db(app) -> Database:
     with _worker_lock:  # two first ticks at once must not open two pools
         if app.state.db_worker is None:
             s = app.state.settings
-            db = Database(s.worker_dsn, pgbouncer=s.pgbouncer)
-            try:  # design §4.3: never run the jobs as a role RLS would not bind
-                with db.system_tx() as conn:
-                    assert_role_safety(conn)
-            except Exception:
-                db.close()
-                raise
-            app.state.db_worker = db
+            app.state.db_worker = open_checked(s.worker_dsn, s.pgbouncer)
         return app.state.db_worker
 
 

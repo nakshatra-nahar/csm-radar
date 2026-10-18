@@ -234,3 +234,17 @@ def test_timestamps_read_back_in_utc(web_db, owner_dsn, two_tenants_seeded):
     assert at.utcoffset().total_seconds() == 0
     with owner_connect(owner_dsn) as conn:
         assert conn.execute("SELECT now()").fetchone()[0].utcoffset().total_seconds() == 0
+
+
+def test_open_checked_refuses_and_closes_an_unsafe_pool(owner_dsn, monkeypatch):
+    """The CLI worker and the tick hook open their pool the same way: an owner DSN is refused
+    and the pool it opened is closed, not leaked."""
+    from radar import db as dbmod
+    closed = []
+    real = Database.close
+    monkeypatch.setattr(Database, "close", lambda self: (closed.append(self), real(self)))
+    with pytest.raises(UnsafeRole):
+        dbmod.open_checked(owner_dsn)
+    assert len(closed) == 1
+    safe = dbmod.open_checked(_role_dsn(owner_dsn, "radar_worker", WORKER_PASSWORD))
+    safe.close()

@@ -13,7 +13,7 @@ from radar import clock, evaluate, ops, registry
 from radar.agent import worker
 from radar.bootstrap import bootstrap, seed_tenants_and_users, train_and_promote
 from radar.config import Settings, load_settings
-from radar.db import Database, assert_role_safety
+from radar.db import Database, open_checked
 from radar.migrate import migrate
 from radar.sim import generate
 from radar.tenants import TENANTS, tenant_id
@@ -24,10 +24,7 @@ def _print(obj) -> None:
 
 
 def _worker_db(s: Settings) -> Database:
-    db = Database(s.worker_dsn, pgbouncer=s.pgbouncer)
-    with db.system_tx() as conn:  # design §4.3: never run the jobs as a role RLS would not bind
-        assert_role_safety(conn)
-    return db
+    return open_checked(s.worker_dsn, s.pgbouncer)  # never run jobs as a role RLS would not bind
 
 
 def _seed(a, s: Settings) -> None:

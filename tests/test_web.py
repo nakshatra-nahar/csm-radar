@@ -18,6 +18,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from radar import clock, policy, registry, scoring
+from radar import db as radar_db
 from radar.agent import brief, handlers, jobs, template, worker
 from radar.agent.evidence import build_pack
 from radar.agent.jobs import Job
@@ -961,7 +962,7 @@ def test_team_totals_include_departed_reports_accounts(web):
 def test_tick_maps_only_an_unsafe_role_to_503(web, monkeypatch):
     def broken(conn):
         raise RuntimeError("pool exploded")
-    monkeypatch.setattr(hooks, "assert_role_safety", broken)
+    monkeypatch.setattr(radar_db, "assert_role_safety", broken)
     app = create_app(settings(worker_dsn=_role_dsn(web.owner_dsn, "radar_worker",
                                                    WORKER_PASSWORD)), web.web_db)
     r = TestClient(app, raise_server_exceptions=False).post(

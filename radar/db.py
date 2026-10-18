@@ -63,6 +63,18 @@ class Database:
         self.pool.close()
 
 
+def open_checked(dsn: str, pgbouncer: bool = False) -> Database:
+    """A worker pool, refused (and closed) for a role RLS would not bind (design §4.3)."""
+    db = Database(dsn, pgbouncer=pgbouncer)
+    try:
+        with db.system_tx() as conn:
+            assert_role_safety(conn)
+    except Exception:
+        db.close()
+        raise
+    return db
+
+
 class UnsafeRole(RuntimeError):
     """The connection's role is one RLS would not constrain (design §4.3)."""
 
