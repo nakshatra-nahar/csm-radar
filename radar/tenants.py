@@ -106,6 +106,7 @@ def runtime_config(slug: str) -> dict:
         },
         "band_lift": {"red": 3.0, "yellow": 1.5},
         "band_rules": {"red": 3.0, "yellow": 1.5},  # rules_score points, tenants without a model
+        "min_slot_lift": 1.0,  # Ruling AP: a model slot needs at least the tenant base rate
         "eligibility_window_days": 150,
         "sf": {"csm_field": spec.csm_field},
         "llm": {"enabled": True, "daily_token_budget": 200000},

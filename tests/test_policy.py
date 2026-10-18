@@ -123,7 +123,8 @@ def book(owner_conn, tenant):
 
 def make_run(owner_conn, tid, csm, as_of, rows):
     """A done run with one account_scores row per dict: account, rank (None: ineligible),
-    p, coverage (default True), term_end (default as_of + 300 days)."""
+    p (None: no model), lift (default 1.0, the slot floor), rules_score (default 0),
+    coverage (default True), term_end (default as_of + 300 days)."""
     run = owner_conn.execute(
         "INSERT INTO score_runs (tenant_id, trigger, actionable, as_of, config_version,"
         " status, started_at) VALUES (%s, 'sweep', true, %s, 1, 'done', %s) RETURNING id",
@@ -133,11 +134,13 @@ def make_run(owner_conn, tid, csm, as_of, rows):
         term_end = r.get("term_end", as_of + timedelta(days=300))
         owner_conn.execute(
             "INSERT INTO account_scores (tenant_id, run_id, account_id, as_of, eligible, p,"
-            " rank_in_book, owner_user_id, arr_minor, expected_arr_at_risk_minor,"
-            " contributions, context, coverage) VALUES (%s, %s, %s, %s, %s, %s, %s, %s,"
-            " 100000, %s, %s, %s, %s)",
-            (tid, run, r["account"], as_of, r.get("rank") is not None, p, r.get("rank"), csm,
-             round(p * 100000), Jsonb({"usage_drop": 0.5}),
+            " lift, rules_score, rank_in_book, owner_user_id, arr_minor,"
+            " expected_arr_at_risk_minor, contributions, context, coverage) VALUES (%s, %s,"
+            " %s, %s, %s, %s, %s, %s, %s, %s, 100000, %s, %s, %s, %s)",
+            (tid, run, r["account"], as_of, r.get("rank") is not None, p,
+             None if p is None else r.get("lift", 1.0), r.get("rules_score", 0.0),
+             r.get("rank"), csm, None if p is None else round(p * 100000),
+             Jsonb({"usage_drop": 0.5}),
              Jsonb({"term_end": term_end.isoformat()}), Jsonb({"ok": r.get("coverage", True)})))
     return run
 
@@ -230,6 +233,29 @@ def test_held_must_act_account_takes_no_model_slot(owner_conn, worker_db, book):
     freeze(worker_db, tid, run, NOW)
     assert [(i["kind"], i["account_id"]) for i in items(owner_conn, tid, csm, NOW.date())] == [
         ("model", other)]
+
+
+def test_model_slots_need_lift_at_the_floor(owner_conn, worker_db, book):
+    """Ruling AP: capacity is a cap, not a quota. A book whose other accounts sit below the
+    tenant base rate (lift < min_slot_lift) gets fewer than K model slots."""
+    tid, csm, make_accounts = book
+    accts = make_accounts(4)
+    run = make_run(owner_conn, tid, csm, NOW, [
+        {"account": a, "rank": i + 1, "lift": lift}
+        for i, (a, lift) in enumerate(zip(accts, [2.0, 1.0, 0.99, 0.5], strict=True))])
+    assert CFG["min_slot_lift"] == 1.0
+    freeze(worker_db, tid, run, NOW)  # K = 10
+    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == accts[:2]
+
+
+def test_without_a_model_slots_need_rules_score_at_yellow(owner_conn, worker_db, book):
+    tid, csm, make_accounts = book
+    accts = make_accounts(3)
+    run = make_run(owner_conn, tid, csm, NOW, [
+        {"account": a, "rank": i + 1, "p": None, "rules_score": r}
+        for i, (a, r) in enumerate(zip(accts, [3.0, 1.5, 1.0], strict=True))])
+    freeze(worker_db, tid, run, NOW)
+    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == accts[:2]
 
 
 def suppress(owner_conn, tid, account, p):

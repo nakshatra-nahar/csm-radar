@@ -12,7 +12,7 @@ from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
 from radar.db import Database
 from radar.registry import rules_score
 from radar.sim import generate
-from radar.tenants import tenant_id
+from radar.tenants import runtime_config, tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]
@@ -41,6 +41,27 @@ def test_topk_by_book_respects_k_and_owner():
     # at T2 values 20, 10, 10: the tie for the second slot goes to the larger ARR
     assert top.tolist() == [False, True, True, True, True, True, False, True]
     assert top.index.equals(df.index)
+
+
+def test_topk_by_book_leaves_slots_empty_below_the_floor():
+    """Ruling AP, as served: a row below the slot floor never fills a top-K slot, even in a
+    book with room for it."""
+    T = pd.Timestamp("2026-01-05", tz="UTC")
+    df = pd.DataFrame({"as_of": [T] * 3, "owner_user_id": ["a"] * 3,
+                       "score": [0.3, 0.2, 0.1], "arr_minor": [100] * 3})
+    floor = pd.Series([True, False, True])
+    assert evaluate.topk_by_book(df, "score", k=10, floor=floor).tolist() == [True, False, True]
+
+
+def test_slot_floors_match_the_served_rule():
+    """Model-like columns need lift (p over that week's mean p) >= min_slot_lift; the rules
+    heuristic needs rules_score at the yellow band cut."""
+    T1, T2 = pd.Timestamp("2026-01-05", tz="UTC"), pd.Timestamp("2026-01-12", tz="UTC")
+    t = pd.DataFrame({"as_of": [T1, T1, T2, T2], "model": [0.3, 0.1, 0.05, 0.15],
+                      "rules": [1.5, 1.0, 0.0, 3.0]})
+    cfg = runtime_config("hearthline")
+    assert evaluate.slot_floor(t, "model", cfg).tolist() == [True, False, False, True]
+    assert evaluate.slot_floor(t, "rules", cfg).tolist() == [True, False, False, True]
 
 
 def test_headline_metrics_are_weekly_means():

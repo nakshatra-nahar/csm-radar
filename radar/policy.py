@@ -62,6 +62,12 @@ def rank_in_book(key: pd.Series, arr: pd.Series, *book: pd.Series) -> pd.Series:
         frame.index)
 
 
+def slot_floor(cfg: dict, has_model: bool) -> float:
+    """Ruling AP: capacity is a cap, not a quota. The least lift (with a model) or rules_score
+    (without one: the yellow band cut) an account needs to fill a model slot."""
+    return cfg["min_slot_lift"] if has_model else cfg.get("band_rules", RULES_BAND)["yellow"]
+
+
 def choose_play(kind: str, contributions: dict[str, float]) -> str:
     """A must-act kind maps to its play; a model slot to the source family of its largest
     positive behavioural contribution."""
@@ -189,6 +195,12 @@ def _live_case(conn, account_id, kind: str) -> UUID:
                         " AND status IN ('open', 'held')", (account_id, kind)).fetchone()["id"]
 
 
+def _slot_ok(score: dict, cfg: dict) -> bool:
+    has_model = score["p"] is not None
+    value = score["lift"] if has_model else score["rules_score"]
+    return value is not None and value >= slot_floor(cfg, has_model)
+
+
 def freeze_worklists(conn, tenant_id, run_id, week_start: date, now: datetime,
                      cfg: dict) -> int:
     """Freeze each CSM's list for the week from the run (worklist v1); returns how many were
@@ -196,7 +208,7 @@ def freeze_worklists(conn, tenant_id, run_id, week_start: date, now: datetime,
     k = cfg["capacity_per_csm"]
     _auto_close(conn, tenant_id, run_id, week_start, now, k)
     scores = conn.execute(
-        "SELECT account_id, owner_user_id, eligible, p, rank_in_book, as_of,"
+        "SELECT account_id, owner_user_id, eligible, p, lift, rules_score, rank_in_book, as_of,"
         " expected_arr_at_risk_minor, contributions, (coverage->>'ok')::bool AS coverage_ok,"
         " (context->>'term_end')::timestamptz AS term_end FROM account_scores"
         " WHERE tenant_id = %s AND run_id = %s", (tenant_id, run_id)).fetchall()
@@ -233,7 +245,7 @@ def freeze_worklists(conn, tenant_id, run_id, week_start: date, now: datetime,
         seen |= {s["account_id"] for s in blind}
         held = _suppressed(conn, book, now)
         ranked = sorted((s for s in book.values() if s["eligible"] and s["rank_in_book"]
-                         and s["account_id"] not in seen | held),
+                         and s["account_id"] not in seen | held and _slot_ok(s, cfg)),
                         key=lambda s: s["rank_in_book"])
         for s in ranked[:max(0, k - len(listed))]:
             play = choose_play("model_topk", s["contributions"] or {})

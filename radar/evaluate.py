@@ -19,19 +19,19 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from radar import diagnostics, model
+from radar import diagnostics, model, policy
 from radar.asof import Frames, load_frames, resolver
 from radar.bootstrap import HISTORY_END
 from radar.config import load_settings
 from radar.db import Database
 from radar.features import compute_features
 from radar.labels import MATURITY, churn_decisions, label_rows, snapshot_grid
-from radar.policy import rank_in_book
 from radar.registry import FEATURE_NAMES, FEATURES, rules_score
 from radar.sim.params import PARAMS
 from radar.tenants import TENANTS, tenant_id
 
-__all__ = ["rules_score", "topk_by_book", "run", "acceptance", "render_model_card"]
+__all__ = ["rules_score", "topk_by_book", "slot_floor", "run", "acceptance",
+           "render_model_card"]
 
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]
 GROUPS = ["product", "zendesk", "gmail", "billing", "crm"]
@@ -49,12 +49,28 @@ def load_truth(data_dir: Path, slug: str) -> dict[str, pd.DataFrame]:
 
 def _rank(df: pd.DataFrame, key: pd.Series) -> pd.Series:
     """1-based rank per (as_of, owner_user_id) book: the served worklist's rank_in_book."""
-    return rank_in_book(key, df["arr_minor"], df["as_of"], df["owner_user_id"])
+    return policy.rank_in_book(key, df["arr_minor"], df["as_of"], df["owner_user_id"])
 
 
-def topk_by_book(df: pd.DataFrame, score_col: str, k: int) -> pd.Series:
-    """In each CSM's top K by expected ARR at risk (score * arr_minor), per as_of."""
-    return _rank(df, df[score_col] * df["arr_minor"]) <= k
+def topk_by_book(df: pd.DataFrame, score_col: str, k: int,
+                 floor: pd.Series | None = None) -> pd.Series:
+    """In each CSM's top K by expected ARR at risk (score * arr_minor), per as_of, among the
+    rows passing floor (slot_floor): a slot no row qualifies for stays empty."""
+    key = df[score_col] * df["arr_minor"]
+    if floor is not None:
+        key = key.where(floor)
+    return (_rank(df, key) <= k) & key.notna()
+
+
+def slot_floor(t: pd.DataFrame, col: str, cfg: dict) -> pd.Series:
+    """policy.slot_floor on backtest rows: the rules heuristic needs rules_score at the yellow
+    cut; a probability column needs lift, p over the week's mean p, at min_slot_lift.
+    shortcut: the mean is over the labelled test rows, not every eligible account as in
+    scoring (label_rows drops accounts whose decision is visible); use the served lift if
+    that gap ever matters."""
+    if col == "rules":
+        return t[col] >= policy.slot_floor(cfg, has_model=False)
+    return t[col] / t.groupby("as_of")[col].transform("mean") >= policy.slot_floor(cfg, True)
 
 
 def _weekly_mean(num: pd.Series, den: pd.Series, week: pd.Series) -> float:
@@ -158,7 +174,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     for p in ("rules", "model", "oracle", "gbm", *(f"without_{g}" for g in GROUPS),
               *(f"c_{c}" for c in C_GRID)):
         if p in t:
-            t[f"w_{p}"] = topk_by_book(t, p, k)
+            t[f"w_{p}"] = topk_by_book(t, p, k, slot_floor(t, p, tenant["config"]))
             scores[p] = t[p]
     policies = {p: _metrics(t["label"], arr, t[f"w_{p}"].astype(float), t["as_of"],
                             scores.get(p), t[p] if p in ("model", "oracle", "gbm") else None)
