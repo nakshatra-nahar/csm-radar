@@ -10,18 +10,26 @@ from radar.db import owner_connect
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
+SAFE = {"rolsuper": "NOSUPERUSER", "rolbypassrls": "NOBYPASSRLS", "rolinherit": "NOINHERIT",
+        "rolcreatedb": "NOCREATEDB", "rolcreaterole": "NOCREATEROLE"}
+
+
 def _ensure_roles(conn: psycopg.Connection, passwords: dict[str, str]) -> None:
     # Roles are cluster-global: another database (or an earlier test run) may already
     # have created them, so create if missing and always re-assert attributes and password.
     for role, password in passwords.items():
-        exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-        if not exists:
+        query = sql.SQL("SELECT {} FROM pg_roles WHERE rolname = %s").format(
+            sql.SQL(", ").join(map(sql.Identifier, SAFE)))
+        row = conn.execute(query, (role,)).fetchone()
+        if row is None:
             conn.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(role)))
+            row = conn.execute(query, (role,)).fetchone()
+        # State only the attributes that are unsafe now: a non-superuser owner (Neon's
+        # neondb_owner) may not even restate NOSUPERUSER, and a fresh role already has it.
+        fix = sql.SQL(" ").join(sql.SQL(SAFE[k]) for k, on in zip(SAFE, row, strict=True) if on)
         conn.execute(
-            sql.SQL(
-                "ALTER ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE"
-                " PASSWORD {}"
-            ).format(sql.Identifier(role), sql.Literal(password))
+            sql.SQL("ALTER ROLE {} LOGIN {} PASSWORD {}").format(
+                sql.Identifier(role), fix, sql.Literal(password))
         )
         # every session of the role reads timestamptz in UTC, pooled or not (radar.db)
         conn.execute(sql.SQL("ALTER ROLE {} SET timezone TO 'UTC'").format(sql.Identifier(role)))

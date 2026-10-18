@@ -7,3 +7,6 @@ __pycache__/
 data/
 eval/*.parquet
 .DS_Store
+.vercel
+.env*
+!.env.example

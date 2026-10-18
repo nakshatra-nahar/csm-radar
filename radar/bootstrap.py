@@ -160,9 +160,14 @@ def _freeze_this_week(db: Database, tid, now: datetime) -> None:
         freeze_week(conn, tid, run["id"], monday, now, cfg)
 
 
-def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
-    """Each step skips what an earlier run already did, so a re-run adds nothing."""
-    now, slugs = clock.now(), list(TENANTS)
+def bootstrap(settings: Settings, scale: float = 1.0, tenants: list[str] | None = None) -> dict:
+    """Each step skips what an earlier run already did, so a re-run adds nothing. `tenants`
+    limits the run to some tenants: a free Neon project (512 MB) holds two of the three."""
+    slugs = list(tenants or TENANTS)
+    unknown = sorted(set(slugs) - set(TENANTS))
+    if unknown:
+        raise ValueError(f"unknown tenants: {', '.join(unknown)}")
+    now = clock.now()
     applied = migrate(settings.owner_dsn, settings.web_password, settings.worker_password)
     db = Database(settings.worker_dsn)
     try:

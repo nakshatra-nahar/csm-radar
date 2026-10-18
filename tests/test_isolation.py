@@ -5,7 +5,7 @@ import pytest
 
 from radar.config import load_settings
 from radar.db import Database, UnsafeRole, assert_role_safety, owner_connect
-from radar.migrate import migrate
+from radar.migrate import _ensure_roles, migrate
 from radar.web.app import create_app
 from tests.conftest import WEB_PASSWORD, WORKER_PASSWORD, _role_dsn
 
@@ -91,6 +91,28 @@ def test_web_and_worker_refuse_a_neon_style_owner(owner_dsn, owner_conn, attrs, 
     finally:
         db.close()
         owner_conn.execute(f"DROP TABLE IF EXISTS {role}_t; DROP ROLE {role}")
+
+
+def test_roles_are_set_up_by_a_non_superuser_owner(owner_dsn):
+    """Neon's neondb_owner has CREATEROLE but is no superuser, and Postgres 16 refuses even
+    a redundant NOSUPERUSER from it; the role it creates must still come out safe."""
+    tag = uuid.uuid4().hex[:8]
+    owner, app = f"radar_t_owner_{tag}", f"radar_t_app_{tag}"
+    with owner_connect(owner_dsn, autocommit=True) as conn:
+        conn.execute(f'CREATE ROLE "{owner}" CREATEROLE')
+        try:
+            conn.execute(f'SET ROLE "{owner}"')
+            _ensure_roles(conn, {app: "pw-1"})
+            _ensure_roles(conn, {app: "pw-2"})  # re-run on an existing role
+            conn.execute("RESET ROLE")
+            row = conn.execute(
+                "SELECT rolsuper, rolbypassrls, rolinherit, rolcanlogin FROM pg_roles"
+                " WHERE rolname = %s", (app,)).fetchone()
+            assert tuple(row) == (False, False, False, True)
+        finally:
+            conn.execute("RESET ROLE")
+            conn.execute(f'DROP ROLE IF EXISTS "{app}"')
+            conn.execute(f'DROP ROLE IF EXISTS "{owner}"')
 
 
 def test_migrate_is_idempotent(owner_dsn):

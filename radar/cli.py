@@ -106,10 +106,12 @@ def parser() -> argparse.ArgumentParser:
     gen.add_argument("--scale", type=float, default=1.0)
     gen.add_argument("--seed", type=int, default=7)
     gen.add_argument("--out", type=Path, help="default: RADAR_DATA_DIR")
-    boot = cmd("bootstrap", lambda a, s: _print(bootstrap(s, a.scale)),
+    boot = cmd("bootstrap", lambda a, s: _print(bootstrap(s, a.scale, a.tenants)),
                "set up a demo database from scratch; safe to re-run")
     boot.add_argument("--scale", type=float, default=1.0,
                       help="world size if the feed must be generated")
+    boot.add_argument("--tenants", type=lambda v: v.split(","),
+                      help="comma-separated tenant slugs (default: all)")
     cmd("train", _train, "fit and promote a tenant's model").add_argument(
         "--tenant", required=True, choices=list(TENANTS))
     ev = cmd("eval", _eval, "write a tenant's model card and eval/<tenant>.json")

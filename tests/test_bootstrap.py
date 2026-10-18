@@ -359,3 +359,24 @@ def test_train_retires_only_its_own_tenants_model(booted):
     assert [r for r in after if r["tenant_id"] != hearth] == [
         r for r in before if r["tenant_id"] != hearth] != []
     assert [r["version"] for r in after if r["tenant_id"] == hearth] == [2]  # per tenant
+
+
+def test_bootstrap_seeds_only_the_tenants_asked_for(small_world_dir):
+    with fresh_database() as dsn, pytest.MonkeyPatch.context() as mp:
+        for name in ("RADAR_WEB_DSN", "RADAR_WORKER_DSN", "ANTHROPIC_API_KEY", "FEED_SOURCE"):
+            mp.delenv(name, raising=False)
+        mp.setenv("RADAR_OWNER_DSN", dsn)
+        mp.setenv("RADAR_WEB_PASSWORD", WEB_PASSWORD)
+        mp.setenv("RADAR_WORKER_PASSWORD", WORKER_PASSWORD)
+        mp.setenv("RADAR_DATA_DIR", str(small_world_dir))
+        settings = load_settings()
+        with pytest.raises(ValueError, match="unknown tenants: nope"):
+            bootstrap(settings, tenants=["kitewire", "nope"])
+        clock.freeze(HISTORY_END)
+        try:
+            result = bootstrap(settings, tenants=["kitewire"])
+        finally:
+            clock.unfreeze()
+        assert set(result["ingested"]) == {"kitewire"}
+        with owner_connect(dsn) as conn:
+            assert [r[0] for r in conn.execute("SELECT slug FROM tenants")] == ["kitewire"]
