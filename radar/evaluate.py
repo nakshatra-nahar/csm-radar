@@ -331,8 +331,9 @@ def _reliability(t: pd.DataFrame) -> dict:
 
 def _lead_time(t: pd.DataFrame) -> dict:
     """For each decision in the test windows: weeks from the first of 2 consecutive weeks in
-    the owner's model top-K to the decision. Unflagged decisions count against share_6w."""
-    flagged = t.loc[t["w_model"], ["account_id", "as_of"]]
+    the owner's model top-K to the decision, within its 90-day label window (label 1). Unflagged
+    decisions count against share_6w."""
+    flagged = t.loc[t["w_model"] & (t["label"] == 1), ["account_id", "as_of"]]
     seen = set(zip(flagged["account_id"], flagged["as_of"], strict=True))
     sustained = flagged[[(a, T + WEEK) in seen for a, T in zip(
         flagged["account_id"], flagged["as_of"], strict=True)]]

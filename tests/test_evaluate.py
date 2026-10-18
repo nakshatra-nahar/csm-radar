@@ -312,3 +312,17 @@ def test_renewal_sort_claim_follows_the_intervals():
     assert level.startswith("- Renewal sort does no better than random because")
     assert evaluate._renewal_vs_random({"renewal_sort": ci(0.30, 0.40),
                                         "random": ci(0.19, 0.20)}) is None
+
+
+def test_lead_time_counts_only_flags_inside_the_label_window():
+    """A flag on a label-0 row (more than 90 days before the decision) is not a lead: every
+    lead is at most the 90-day horizon (13 weeks)."""
+    T0 = pd.Timestamp("2026-01-05", tz="UTC")
+    weeks = [T0 + i * evaluate.WEEK for i in range(40)]
+    decided = T0 + 40 * evaluate.WEEK
+    t = pd.DataFrame({"account_id": "a", "as_of": weeks, "decision_at": decided,
+                      "label": [int(decided - T <= pd.Timedelta(days=90)) for T in weeks],
+                      "w_model": [i in (0, 1, 30, 31) for i in range(40)]})
+    lead = evaluate._lead_time(t)
+    assert lead["flagged"] == 1 and lead["median_weeks"] == 10.0
+    assert lead["median_weeks"] <= 90 / 7
