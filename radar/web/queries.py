@@ -11,6 +11,7 @@ import pandas as pd
 from radar import clock, model, policy, registry, scoring
 from radar.agent import brief
 from radar.agent.evidence import EXACT_METHODS, describe, money
+from radar.agent.llm import TOKENS_SQL
 
 TIMELINE_ITEMS = 40
 DRIVER_FLOOR = 0.1  # log-odds: a smaller behavioural term does not explain a model slot
@@ -251,8 +252,6 @@ def former_reports(conn, manager_id: UUID) -> set:
 
 # --- ops page (admin) -----------------------------------------------------------------------
 
-TOKENS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
-          "cache_read_input_tokens")
 OPS = {
     "sources": "SELECT * FROM source_status ORDER BY source",
     "quarantine": "SELECT reason, count(*) AS n FROM quarantine WHERE resolved_at IS NULL"
@@ -262,9 +261,9 @@ OPS = {
     "jobs": "SELECT status, count(*) AS n FROM jobs GROUP BY status ORDER BY status",
     "agent": "SELECT at, action, entity_type, entity_id, after->>'status' AS status"
              " FROM audit_log WHERE actor = 'agent' ORDER BY at DESC, id DESC LIMIT 20",
-    "llm": "SELECT count(*) AS calls, coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum("
-           + " + ".join(f"coalesce((usage->>'{t}')::bigint, 0)" for t in TOKENS)
-           + "), 0) AS tokens FROM llm_calls WHERE created_at >= %(since)s",
+    "llm": "SELECT count(*) AS calls, coalesce(sum(cost_usd), 0) AS cost_usd,"
+           f" coalesce(sum({TOKENS_SQL}), 0) AS tokens FROM llm_calls"
+           " WHERE created_at >= %(since)s",
     "incidents": "SELECT * FROM incidents WHERE closed_at IS NULL OR opened_at >= %(since)s"
                  " - interval '7 days' ORDER BY closed_at IS NULL DESC, opened_at DESC",
     "models": "SELECT id, version, status, metrics, trained_at, promoted_at, promoted_by,"

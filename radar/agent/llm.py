@@ -8,6 +8,9 @@ from typing import Protocol
 
 import anthropic
 
+# One row's tokens in llm_calls.usage: the daily budget gate and /ops sum the same expression
+TOKENS_SQL = " + ".join(f"coalesce((usage->>'{t}')::bigint, 0)" for t in (
+    "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
 TOOL_ID = "toolu_evidence_pack"
 EVIDENCE_TOOL = {
     "name": "get_evidence_pack",

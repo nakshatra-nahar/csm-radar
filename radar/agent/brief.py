@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 from radar import clock, rbac
 from radar.agent import template, validate
 from radar.agent.evidence import EvidencePack, build_pack
-from radar.agent.llm import PRICES, LLMClient, LLMResult, cost_usd
+from radar.agent.llm import PRICES, TOKENS_SQL, LLMClient, LLMResult, cost_usd
 
 PROMPT_VERSION = "brief-v1"
 LEASE = timedelta(seconds=300)  # the job lease (jobs.claim): a pending brief older is orphaned
@@ -85,11 +85,8 @@ def _skip_reason(conn, tenant_id: UUID, client: LLMClient | None) -> str | None:
     tz = ZoneInfo(cfg["config"]["timezone"])
     midnight = datetime.combine(clock.now().astimezone(tz).date(), time(), tz)
     used = conn.execute(
-        "SELECT coalesce(sum(coalesce((usage->>'input_tokens')::bigint, 0)"
-        " + coalesce((usage->>'output_tokens')::bigint, 0)"
-        " + coalesce((usage->>'cache_creation_input_tokens')::bigint, 0)"
-        " + coalesce((usage->>'cache_read_input_tokens')::bigint, 0)), 0) AS n"
-        " FROM llm_calls WHERE created_at >= %s", (midnight,)).fetchone()["n"]
+        f"SELECT coalesce(sum({TOKENS_SQL}), 0) AS n FROM llm_calls WHERE created_at >= %s",
+        (midnight,)).fetchone()["n"]
     return "token_budget_spent" if used >= llm["daily_token_budget"] else None
 
 
