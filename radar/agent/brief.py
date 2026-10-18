@@ -3,7 +3,7 @@ LLM attempt plus one retry, then the deterministic template; the email lands in 
 only as a draft for a human to approve."""
 
 from dataclasses import asdict
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from radar.agent.evidence import EvidencePack, build_pack
 from radar.agent.llm import PRICES, LLMClient, LLMResult, cost_usd
 
 PROMPT_VERSION = "brief-v1"
+LEASE = timedelta(seconds=300)  # the job lease (jobs.claim): a pending brief older is orphaned
 # Static, so it is cached (>= 512 tokens). Its rules mirror validate.check one for one.
 SYSTEM_PROMPT = """\
 You write case briefs for customer success managers (CSMs) at a B2B software company. A brief
@@ -142,7 +143,10 @@ def _audit(conn, action: str, brief_id: UUID, after: dict, reason: str | None) -
 
 
 def _write_draft(conn, case: dict, brief_id: UUID, output: dict, play: str) -> UUID | None:
-    """The customer email as an outbox draft to a recipient chosen here, or None (logged)."""
+    """The customer email as an outbox draft to a recipient chosen here, or None (logged).
+    It supersedes the case's earlier drafts, so one case never has two approvable emails."""
+    conn.execute("UPDATE outbox SET status = 'cancelled' WHERE case_id = %s"
+                 " AND kind = 'customer_email' AND status = 'draft'", (case["id"],))
     to = recipient(conn, case["account_id"])
     skip = ("find_new_champion" if play == "find_new_champion" else
             "no_email" if output["email"] is None else
@@ -160,39 +164,48 @@ def _write_draft(conn, case: dict, brief_id: UUID, output: dict, play: str) -> U
 def generate_brief(db, tenant_id: UUID, case_id: UUID, client: LLMClient | None) -> UUID:
     """The case's brief for its current evidence, generated at most once per
     (case, evidence hash, prompt version). The pending row is committed before the LLM is
-    called, so a retried job or a second worker finds it and never pays twice.
-    shortcut: a brief left pending by a crashed worker is not retried; reclaim pending rows
-    older than the job lease (300 s) if that shows up on the ops page."""
+    called, so a retried job or a second worker finds it and never pays twice. A brief that
+    failed, or stayed pending past the job lease (its worker died), is taken over and redone."""
     with db.tenant_tx(tenant_id, actor="agent") as conn:
         pack = build_pack(conn, tenant_id, case_id)
+        key = (case_id, pack.hash(), PROMPT_VERSION)
         row = conn.execute(
             "INSERT INTO briefs (case_id, evidence_hash, prompt_version, evidence, created_at,"
             " updated_at) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (tenant_id, case_id,"
             " evidence_hash, prompt_version) DO NOTHING RETURNING id",
-            (case_id, pack.hash(), PROMPT_VERSION, Jsonb(asdict(pack)), clock.now(),
-             clock.now())).fetchone()
+            (*key, Jsonb(asdict(pack)), clock.now(), clock.now())).fetchone()
+        if row is None:  # one statement, so only one worker wins the takeover
+            row = conn.execute(
+                "UPDATE briefs SET status = 'pending', updated_at = %s WHERE case_id = %s"
+                " AND evidence_hash = %s AND prompt_version = %s AND (status = 'failed'"
+                " OR (status = 'pending' AND updated_at < %s)) RETURNING id",
+                (clock.now(), *key, clock.now() - LEASE)).fetchone()
         if row is None:
-            return conn.execute(
-                "SELECT id FROM briefs WHERE case_id = %s AND evidence_hash = %s"
-                " AND prompt_version = %s", (case_id, pack.hash(), PROMPT_VERSION)
-            ).fetchone()["id"]
+            return conn.execute("SELECT id FROM briefs WHERE case_id = %s AND evidence_hash = %s"
+                                " AND prompt_version = %s", key).fetchone()["id"]
         brief_id, reason = row["id"], _skip_reason(conn, tenant_id, client)
-    output, attempts = None, []
-    if reason is None:
-        output, attempts, reason = _ask_llm(db, tenant_id, brief_id, pack, client)
-    generator = "llm" if output is not None else "template"
-    output = output or template.render(pack)
-    with db.tenant_tx(tenant_id, actor="agent") as conn:
-        conn.execute("UPDATE briefs SET status = 'ready', generator = %s, output = %s,"
-                     " validation = %s, updated_at = %s WHERE id = %s",
-                     (generator, Jsonb(output), Jsonb({"attempts": attempts,
-                                                       "fallback_reason": reason}),
-                      clock.now(), brief_id))
-        _audit(conn, "brief_ready", brief_id,
-               {"generator": generator, "injection_suspected": output["injection_suspected"]},
-               reason)
-        case = conn.execute("SELECT * FROM cases WHERE id = %s", (case_id,)).fetchone()
-        _write_draft(conn, case, brief_id, output, pack.play)
+    try:
+        output, attempts = None, []
+        if reason is None:
+            output, attempts, reason = _ask_llm(db, tenant_id, brief_id, pack, client)
+        generator = "llm" if output is not None else "template"
+        output = output or template.render(pack)
+        with db.tenant_tx(tenant_id, actor="agent") as conn:
+            conn.execute("UPDATE briefs SET status = 'ready', generator = %s, output = %s,"
+                         " validation = %s, updated_at = %s WHERE id = %s",
+                         (generator, Jsonb(output), Jsonb({"attempts": attempts,
+                                                           "fallback_reason": reason}),
+                          clock.now(), brief_id))
+            _audit(conn, "brief_ready", brief_id,
+                   {"generator": generator, "injection_suspected": output["injection_suspected"]},
+                   reason)
+            case = conn.execute("SELECT * FROM cases WHERE id = %s", (case_id,)).fetchone()
+            _write_draft(conn, case, brief_id, output, pack.play)
+    except Exception as e:  # mark it failed so the job's retry regenerates it, then re-raise
+        with db.tenant_tx(tenant_id, actor="agent") as conn:
+            conn.execute("UPDATE briefs SET status = 'failed', validation = %s, updated_at = %s"
+                         " WHERE id = %s", (Jsonb({"error": repr(e)}), clock.now(), brief_id))
+        raise
     return brief_id
 
 

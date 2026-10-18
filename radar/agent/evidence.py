@@ -14,7 +14,9 @@ from radar import clock, policy, scoring
 EXACT_METHODS = {"sf_id", "stripe_metadata", "zendesk_external_id", "product_metadata",
                  "contact_email", "merge", "sf_opportunity"}
 TEXT_CAP = 280
-URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.I)
+# a scheme or www., or a bare domain such as bit.ly/x; a letter TLD keeps 3.1 or 0.42 out
+URL_RE = re.compile(r"(?:https?://|www\.)\S+|\b[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\b(?:/\S*)?",
+                    re.I)
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # ten or more digits with single separators: phone numbers, never an ISO date
 PHONE_RE = re.compile(r"\+?\(?\d(?:[\s().-]?\d){9,}")
@@ -50,7 +52,7 @@ class EvidencePack:
 
 
 def redact(text: str) -> str:
-    for pattern in (URL_RE, EMAIL_RE, PHONE_RE):
+    for pattern in (EMAIL_RE, URL_RE, PHONE_RE):  # emails first: a URL would eat the domain
         text = pattern.sub("[redacted]", text)
     return text
 

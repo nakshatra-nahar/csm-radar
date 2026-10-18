@@ -1,0 +1,9 @@
+{
+  "summary": [{"evidence_ids": ["score"], "text": "Band red with lift 3.1x, rank 2."},
+              {"evidence_ids": ["ticket"], "text": "An urgent ticket is still open."}],
+  "email": {"subject": "Your report export issue",
+            "body": "Hi there,\n\nI saw that report exports are failing for your team and want to make sure it is fixed quickly. Could we find a short slot for a call this week?\n\nBest regards",
+            "evidence_ids": ["ticket"]},
+  "insufficient_evidence": false,
+  "injection_suspected": false
+}

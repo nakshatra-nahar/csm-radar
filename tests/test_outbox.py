@@ -83,3 +83,16 @@ def test_authorize_roles():
     assert rbac.authorize(admin, None, set(), "promote_model")
     assert not rbac.authorize(mgr, "c2", {"c2"}, "promote_model")
     assert not rbac.authorize(csm, "c1", set(), "edit_config")
+
+
+def test_new_evidence_supersedes_the_case_draft(owner_conn, worker_db, brief_world):
+    w = brief_world
+    old = draft_of(owner_conn, brief.generate_brief(worker_db, w["tid"], w["case"], None))
+    add_case(owner_conn, w["tid"], w["account"], "cancel_announced", "save_call", [])  # ledger
+    new = draft_of(owner_conn, brief.generate_brief(worker_db, w["tid"], w["case"], None))
+    assert new["brief_id"] != old["brief_id"]
+    drafts = owner_conn.execute("SELECT id FROM outbox WHERE case_id = %s AND status = 'draft'",
+                                (w["case"],)).fetchall()
+    assert [d["id"] for d in drafts] == [new["id"]]
+    with pytest.raises(ValueError, match="cancelled"):
+        approve(worker_db, w, old["id"], w["csm"])

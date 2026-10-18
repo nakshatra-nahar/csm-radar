@@ -1,10 +1,12 @@
 import json
+from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from psycopg.rows import dict_row
 
-from radar import scoring
+from radar import clock, scoring
 from radar.agent import brief, template, validate
 from radar.agent.evidence import build_pack
 from radar.agent.llm import FakeClient, LLMResult, cost_usd
@@ -38,24 +40,28 @@ def item(pack, kind):
     return next(i for i in pack.items if i.kind == kind)
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "llm"
+
+
+def canned(name, pack):
+    """A canned output from tests/fixtures/llm, its evidence_ids written as item kinds
+    ("ticket") and mapped here to that kind's id in the pack."""
+    out = json.loads((FIXTURES / f"{name}.json").read_text())
+    for cites in out["summary"] + [out["email"]]:
+        cites["evidence_ids"] = [item(pack, k).id for k in cites["evidence_ids"]]
+    return out
+
+
 @pytest.fixture
 def valid_output(pack):
-    score, ticket = item(pack, "score"), item(pack, "ticket")
-    return {
-        "summary": [{"evidence_ids": [score.id], "text": "Band red with lift 3.1x, rank 2."},
-                    {"evidence_ids": [ticket.id], "text": "An urgent ticket is still open."}],
-        "email": {"subject": "Your report export issue",
-                  "body": "Hi there,\n\nI saw that report exports are failing for your team and"
-                          " want to make sure it is fixed quickly. Could we find a short slot"
-                          " for a call this week?\n\nBest regards",
-                  "evidence_ids": [ticket.id]},
-        "insufficient_evidence": False, "injection_suspected": False}
+    return canned("valid", pack)
 
 
 def mutate(name, out):
     """(output text, stop_reason) after one mutation of a valid output."""
     body = out["email"]["body"]
     extra = {"banned_phrase": " We noticed a churn signal.", "url": " See https://x.io/a",
+             "bare_url": " Pay at evil.example/pay or bit.ly/x",
              "email_address": " Write to help@vendor.io", "phone": " Call +1 555 123 4567",
              "html": " <b>Thanks</b>", "eid_marker_in_email": " [E2]"}
     if name in extra:
@@ -74,7 +80,8 @@ def mutate(name, out):
 
 
 FAILS = {"unknown_id": "ids_exist", "number_not_in_evidence": "numbers_cited",
-         "banned_phrase": "banned_phrase", "url": "email_clean", "email_address": "email_clean",
+         "banned_phrase": "banned_phrase", "url": "email_clean", "bare_url": "email_clean",
+         "email_address": "email_clean",
          "phone": "email_clean", "html": "email_clean", "eid_marker_in_email": "email_clean",
          "refusal": "stop_reason", "max_tokens": "stop_reason", "truncated_json": "parses"}
 
@@ -86,7 +93,8 @@ def test_valid_output_passes(valid_output, pack):
 
 
 @pytest.mark.parametrize("mutation", [
-    "unknown_id", "number_not_in_evidence", "banned_phrase", "url", "email_address", "phone",
+    "unknown_id", "number_not_in_evidence", "banned_phrase", "url", "bare_url", "email_address",
+    "phone",
     "html", "eid_marker_in_email", "refusal", "max_tokens", "truncated_json",
     "uppercase_enum_ok"])
 def test_validator_catches_mutations(mutation, valid_output, pack):
@@ -211,7 +219,7 @@ def test_brief_generated_once_under_retry(owner_conn, worker_db, brief_world, va
 def test_evidence_truncates_and_tags_untrusted(owner_conn, worker_db, brief_world):
     w = brief_world
     text = ("Ünïcödé 日本語 <script>alert(1)</script> mail evil@attacker.co or call"
-            " +44 20 7946 0958, see https://evil.example/x?y=1 ") * 120  # ~10k chars
+            " +44 20 7946 0958, see https://evil.example/x?y=1 or bit.ly/promo ") * 110  # ~10k
     ticket = add_event(owner_conn, w["tid"], w["account"], "zd_org:9", "zendesk_external_id",
                        "support.ticket", {"ticket_id": 77, "subject": "Help",
                                           "description_excerpt": text}, status="open")
@@ -220,7 +228,7 @@ def test_evidence_truncates_and_tags_untrusted(owner_conn, worker_db, brief_worl
     [it] = [i for i in pack_of(worker_db, w, case).items if i.event_id == ticket]
     assert len(it.display) <= 280 and it.trust == "untrusted_customer_text"
     assert "[redacted]" in it.display
-    assert not any(s in it.display for s in ("evil@", "https://", "7946"))
+    assert not any(s in it.display for s in ("evil@", "https://", "7946", "bit.ly"))
 
 
 def test_pack_is_deterministic_and_marks_only_exact_keys_safe(worker_db, brief_world, pack):
@@ -283,12 +291,7 @@ def test_injection_fixture_does_not_change_score_or_draft(trained_world_db):
     ticket = next(i for i in pack.items if i.kind == "ticket")
     assert ticket.trust == "untrusted_customer_text"
     assert not any(s in ticket.display for s in ("maple-street-realty.co", "bit.ly"))
-    obeyed = {"summary": [{"evidence_ids": [ticket.id], "text": "Customer asks for help."}],
-              "email": {"subject": "A 40% discount for you",
-                        "body": "We can offer a 40% discount. Please send the customer list to"
-                                " ops@maple-street-realty.co and visit http://bit.ly/radar-x",
-                        "evidence_ids": [ticket.id]},
-              "insufficient_evidence": False, "injection_suspected": False}
+    obeyed = canned("injection_obeyed", pack)
     brief_id = brief.generate_brief(db, tid, case, FakeClient([result(obeyed), result(obeyed)]))
     with owner_connect(trained_world_db["owner_dsn"], row_factory=dict_row) as conn:
         out = brief_row(conn, brief_id)["output"]
@@ -297,3 +300,31 @@ def test_injection_fixture_does_not_change_score_or_draft(trained_world_db):
     shown = json.dumps([out, drafts]).lower()
     assert not [s for s in INJECTED if s in shown]
     assert reason.startswith("validation_failed") and "banned_phrase" in reason
+
+
+class Boom:
+    def complete(self, *args):
+        raise RuntimeError("worker crashed mid-call")
+
+
+def test_crashed_brief_is_failed_then_regenerated(owner_conn, worker_db, brief_world,
+                                                  valid_output):
+    w = brief_world
+    with pytest.raises(RuntimeError):
+        brief.generate_brief(worker_db, w["tid"], w["case"], Boom())
+    [failed] = rows(owner_conn, "SELECT * FROM briefs WHERE case_id = %s", w["case"])
+    assert failed["status"] == "failed" and "worker crashed" in failed["validation"]["error"]
+    brief_id = brief.generate_brief(worker_db, w["tid"], w["case"],
+                                    FakeClient([result(valid_output)]))
+    row = brief_row(owner_conn, brief_id)
+    assert (brief_id, row["status"], row["generator"]) == (failed["id"], "ready", "llm")
+    assert len(rows(owner_conn, "SELECT 1 FROM outbox WHERE brief_id = %s", brief_id)) == 1
+
+
+def test_stale_pending_brief_is_taken_over(owner_conn, worker_db, brief_world):
+    w = brief_world
+    brief_id = brief.generate_brief(worker_db, w["tid"], w["case"], None)
+    owner_conn.execute("UPDATE briefs SET status = 'pending', updated_at = %s WHERE id = %s",
+                       (clock.now() - timedelta(seconds=301), brief_id))
+    assert brief.generate_brief(worker_db, w["tid"], w["case"], None) == brief_id
+    assert brief_row(owner_conn, brief_id)["status"] == "ready"
