@@ -7,13 +7,12 @@ from uuid import UUID
 
 import numpy as np
 import pandas as pd
-import psycopg
 from psycopg.types.json import Jsonb
 from sklearn.linear_model import LogisticRegression
 
 from radar import clock, model
 from radar.asof import load_frames
-from radar.db import Database
+from radar.db import Database, owner_connect
 from radar.ingest import feed
 from radar.ingest.pipeline import IngestStats
 from radar.labels import MATURITY, build_training_set, snapshot_grid
@@ -28,7 +27,7 @@ ECE_MAX, ECE_MIN_ROWS = 0.02, 300  # design §6: Platt only past this error, on 
 
 def seed_tenants_and_users(owner_dsn: str, db: Database, slugs: list[str], seed: int = 7) -> None:
     """Idempotent. Tenants go in as the owner: the app roles may not insert tenants."""
-    with psycopg.connect(owner_dsn, autocommit=True) as conn:
+    with owner_connect(owner_dsn, autocommit=True) as conn:
         for slug in slugs:
             spec, config = TENANTS[slug], runtime_config(slug)
             conn.execute(

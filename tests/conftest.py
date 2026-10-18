@@ -1,6 +1,7 @@
 import os
 import uuid
 from contextlib import contextmanager
+from datetime import timedelta
 
 import psycopg
 import pytest
@@ -8,9 +9,9 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from radar import model
+from radar import clock, model
 from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users, train_and_promote
-from radar.db import Database
+from radar.db import Database, owner_connect
 from radar.migrate import migrate
 from radar.sim import generate, staff
 from radar.tenants import TENANTS, runtime_config, tenant_id
@@ -49,7 +50,7 @@ def _role_dsn(owner_dsn: str, role: str, password: str) -> str:
 
 @pytest.fixture(scope="session")
 def owner_conn(owner_dsn):
-    with psycopg.connect(owner_dsn, autocommit=True, row_factory=dict_row) as conn:
+    with owner_connect(owner_dsn, autocommit=True, row_factory=dict_row) as conn:
         yield conn
 
 
@@ -165,10 +166,82 @@ def trained_world_db(small_world_db):
     (they hold from scale 0.3, see test_signs_hold_on_small_world), so the sign gate is lifted
     here too. Adds "models" {slug: model id | None}.
     """
-    with psycopg.connect(small_world_db["owner_dsn"], autocommit=True) as conn:
+    with owner_connect(small_world_db["owner_dsn"], autocommit=True) as conn:
         conn.execute("UPDATE tenants SET config = jsonb_set(config, '{model,min_decisions}', '20')")
     db = small_world_db["db"]
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(model, "check_signs", lambda artifact: [])
         return small_world_db | {"models": {s: train_and_promote(db, tenant_id(s), HISTORY_END)
                                             for s in TENANTS}}
+
+
+# --- briefs and outbox (Task 10) ------------------------------------------------------------
+
+def add_event(owner_conn, tid, account_id, account_ref, method, type_, attrs, status=None,
+              priority=None, amount_minor=None, days_ago=2):
+    """An event (with its raw record) attributed to the account through `method`."""
+    at = clock.now() - timedelta(days=days_ago)
+    raw = owner_conn.execute(
+        "INSERT INTO raw_records (tenant_id, source, source_record_id, payload, payload_hash,"
+        " occurred_at, available_at) VALUES (%s, %s, %s, '{}', 'h', %s, %s) RETURNING id",
+        (tid, type_.split(".")[0], uuid.uuid4().hex, at, at)).fetchone()["id"]
+    owner_conn.execute(
+        "INSERT INTO identity_links (tenant_id, source, account_ref, account_id, method,"
+        " available_at) VALUES (%s, 'test', %s, %s, %s, %s)",
+        (tid, account_ref, account_id, method, at - timedelta(days=30)))
+    return owner_conn.execute(
+        "INSERT INTO events (tenant_id, raw_record_id, source, type, entity_id, account_ref,"
+        " occurred_at, available_at, version_key, status, priority, amount_minor, attrs)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'v1', %s, %s, %s, %s) RETURNING id",
+        (tid, raw, type_.split(".")[0], type_, uuid.uuid4().hex, account_ref, at, at, status,
+         priority, amount_minor, Jsonb(attrs))).fetchone()["id"]
+
+
+def add_case(owner_conn, tid, account_id, kind, play, event_ids):
+    return owner_conn.execute(
+        "INSERT INTO cases (tenant_id, account_id, kind, status, play, opened_by, owner_user_id,"
+        " evidence_event_ids) SELECT %s, %s, %s, 'open', %s, 'test', owner_user_id, %s"
+        " FROM accounts WHERE tenant_id = %s AND id = %s RETURNING id",
+        (tid, account_id, kind, play, event_ids, tid, account_id)).fetchone()["id"]
+
+
+@pytest.fixture
+def brief_world(owner_conn, tenant):
+    """One account owned by the first CSM with a scored run, a champion and a backup contact,
+    a Zendesk ticket (exact key) and a Stripe invoice matched by domain, and an open
+    urgent_ticket_stalled case citing both. Returns a dict of ids."""
+    tid, _ = tenant
+    csm = owner_conn.execute("SELECT id FROM users WHERE tenant_id = %s AND role = 'csm'"
+                             " ORDER BY email LIMIT 1", (tid,)).fetchone()["id"]
+    account = owner_conn.execute(
+        "INSERT INTO accounts (tenant_id, sf_account_id, name, segment, owner_user_id)"
+        " VALUES (%s, %s, 'Oak Lane Homes', 'smb', %s) RETURNING id",
+        (tid, uuid.uuid4().hex[:18], csm)).fetchone()["id"]
+    contacts = [owner_conn.execute(
+        "INSERT INTO contacts (tenant_id, id, account_id, sf_contact_id, email, first_name,"
+        " is_champion) VALUES (%s, gen_random_uuid(), %s, %s, %s, %s, %s) RETURNING id",
+        (tid, account, f"003{name}", f"{name}@oaklane.com", name, champ)).fetchone()["id"]
+        for name, champ in (("ana", True), ("ben", False))]
+    ticket = add_event(owner_conn, tid, account, "zd_org:1", "zendesk_external_id",
+                       "support.ticket", {"ticket_id": 4521, "subject": "Report export fails",
+                                          "description_excerpt": "Exports time out since Monday."},
+                       status="open", priority="urgent")
+    invoice = add_event(owner_conn, tid, account, "stripe:cus_1", "domain", "billing.invoice",
+                        {"attempt_count": 2}, status="open", amount_minor=129900)
+    run = owner_conn.execute(
+        "INSERT INTO score_runs (tenant_id, trigger, actionable, as_of, config_version, status,"
+        " started_at, finished_at, manifest) VALUES (%s, 'sweep', true, %s, 1, 'done', %s, %s,"
+        " '{}') RETURNING id", (tid, clock.now(), clock.now(), clock.now())).fetchone()["id"]
+    owner_conn.execute(
+        "INSERT INTO account_scores (tenant_id, run_id, account_id, as_of, eligible, p, lift,"
+        " band, rank_in_book, owner_user_id, arr_minor, features, contributions, context,"
+        " coverage) VALUES (%s, %s, %s, %s, true, 0.42, 3.1, 'red', 2, %s, 1200000, %s, %s,"
+        " %s, '{\"ok\": true}')",
+        (tid, run, account, clock.now(), csm,
+         Jsonb({"usage_drop": 0.35, "open_urgent_tickets": 0.69}),
+         Jsonb({"usage_drop": 0.8, "open_urgent_tickets": 0.5, "log_arr": -0.2}),
+         Jsonb({"term_end": "2027-01-31T00:00:00+00:00"})))
+    case = add_case(owner_conn, tid, account, "urgent_ticket_stalled", "support_escalation",
+                    [ticket, invoice])
+    return {"tid": tid, "csm": csm, "account": account, "contacts": contacts, "ticket": ticket,
+            "invoice": invoice, "case": case}

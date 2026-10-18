@@ -5,6 +5,8 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
+from radar.db import owner_connect
+
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
@@ -26,7 +28,7 @@ def _ensure_roles(conn: psycopg.Connection, passwords: dict[str, str]) -> None:
 def migrate(owner_dsn: str, web_password: str, worker_password: str) -> list[str]:
     """Apply pending migrations; returns the file names applied this call."""
     applied: list[str] = []
-    with psycopg.connect(owner_dsn, autocommit=True) as conn:
+    with owner_connect(owner_dsn, autocommit=True) as conn:
         # Serialise concurrent starters (web and worker boot together); released on close.
         conn.execute("SELECT pg_advisory_lock(hashtext('radar.migrate'))")
         _ensure_roles(conn, {"radar_web": web_password, "radar_worker": worker_password})

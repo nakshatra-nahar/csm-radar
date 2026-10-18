@@ -3,13 +3,13 @@
 import math
 from datetime import UTC, datetime, timedelta
 
-import psycopg
 import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from radar import model, registry, scoring
 from radar.bootstrap import backfill_runs, train_and_promote
+from radar.db import owner_connect
 from radar.registry import FEATURE_NAMES
 from radar.tenants import tenant_id
 
@@ -20,7 +20,7 @@ BANDS = {"red", "yellow", "green", "unknown", "not_in_window"}
 
 @pytest.fixture(scope="module")
 def owner(trained_world_db):
-    with psycopg.connect(trained_world_db["owner_dsn"], autocommit=True,
+    with owner_connect(trained_world_db["owner_dsn"], autocommit=True,
                          row_factory=dict_row) as conn:
         yield conn
 

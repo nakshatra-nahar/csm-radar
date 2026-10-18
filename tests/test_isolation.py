@@ -3,7 +3,7 @@ import uuid
 import psycopg
 import pytest
 
-from radar.db import assert_role_safety
+from radar.db import assert_role_safety, owner_connect
 from radar.migrate import migrate
 from tests.conftest import WEB_PASSWORD, WORKER_PASSWORD
 
@@ -200,3 +200,12 @@ def test_enqueue_on_conflict_clause_coalesces_tenant_and_system_jobs(
         for tid in (two_tenants_seeded["a"], None):
             assert conn.execute(sql, (tid, key)).fetchone() is not None
             assert conn.execute(sql, (tid, key)).fetchone() is None
+
+
+def test_timestamps_read_back_in_utc(web_db, owner_dsn, two_tenants_seeded):
+    """The server's own time zone (Asia/Kolkata here) must never leak into app timestamps."""
+    with web_db.tenant_tx(two_tenants_seeded["a"]) as conn:
+        at = conn.execute("SELECT available_at FROM raw_records LIMIT 1").fetchone()["available_at"]
+    assert at.utcoffset().total_seconds() == 0
+    with owner_connect(owner_dsn) as conn:
+        assert conn.execute("SELECT now()").fetchone()[0].utcoffset().total_seconds() == 0

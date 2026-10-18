@@ -9,6 +9,13 @@ from psycopg.rows import DictRow, dict_row, tuple_row
 from psycopg_pool import ConnectionPool
 
 Conn = psycopg.Connection[DictRow]
+# Every session reads timestamptz in UTC, whatever the server's own time zone is.
+UTC_SESSION = "-c timezone=UTC"
+
+
+def owner_connect(dsn: str, **kwargs) -> psycopg.Connection:
+    """A direct connection for migrate/bootstrap/eval helpers, in UTC like the pool."""
+    return psycopg.connect(dsn, options=UTC_SESSION, **kwargs)
 
 
 class Database:
@@ -17,7 +24,7 @@ class Database:
         self.pool = ConnectionPool(
             dsn,
             connection_class=Conn,
-            kwargs={"autocommit": True, "row_factory": dict_row},
+            kwargs={"autocommit": True, "row_factory": dict_row, "options": UTC_SESSION},
             min_size=min_size,
             max_size=max_size,
             open=True,

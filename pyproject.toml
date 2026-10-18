@@ -32,7 +32,11 @@ packages = ["radar"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: generates and replays a world (deselect with -m \"not slow\")"]
+markers = [
+    "slow: generates and replays a world (deselect with -m \"not slow\")",
+    "live_llm: calls the real Anthropic API (opt in with -m live_llm)",
+]
+addopts = "-m 'not live_llm'"
 
 [tool.ruff]
 line-length = 100
