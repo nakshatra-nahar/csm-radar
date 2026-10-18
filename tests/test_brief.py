@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from psycopg.rows import dict_row
 
-from radar import clock, registry, scoring
+from radar import asof, clock, registry, scoring
 from radar.agent import brief, evidence, template, validate
 from radar.agent.evidence import build_pack
 from radar.agent.llm import FakeClient, LLMResult, cost_usd
@@ -407,6 +407,54 @@ def test_topk_pack_hash_is_deterministic(trained_world_db, topk_packs):
     with db.tenant_tx(tid) as conn:
         for case, (_, pack) in topk_packs.items():
             assert build_pack(conn, tid, case).hash() == pack.hash()
+
+
+# The pre-Ruling-BB query: every shown-type event of the tenant, then a link lookup per ref.
+TENANT_SCAN = (
+    "SELECT e.*, n.method, n.account_id AS link_account," + asof.ATTRS +
+    " FROM events e JOIN LATERAL (SELECT account_id FROM identity_links l"
+    " WHERE l.account_ref = e.account_ref AND l.available_at <= %(t)s"
+    " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) l ON l.account_id = %(a)s"
+    " LEFT JOIN LATERAL (SELECT method, account_id FROM identity_links l"
+    " WHERE l.account_ref = e.account_ref AND l.available_at <= %(now)s"
+    " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) n ON true"
+    " WHERE e.type = ANY(%(types)s) AND e.available_at <= %(t)s AND e.occurred_at <= %(t)s"
+    " ORDER BY e.entity_id, e.occurred_at, e.version_key, e.id")
+
+
+def test_topk_pack_is_the_same_as_from_the_tenant_scan(trained_world_db, topk_packs,
+                                                       monkeypatch):
+    """Ruling BB: starting from the account's refs gives the same pack as the old query."""
+    tid, db = tenant_id("hearthline"), trained_world_db["db"]
+    monkeypatch.setattr(evidence, "FEATURE_EVENTS", TENANT_SCAN)
+    with db.tenant_tx(tid) as conn:
+        for case, (_, pack) in topk_packs.items():
+            assert build_pack(conn, tid, case).to_json() == pack.to_json()
+
+
+def _events_read(plan: dict) -> float:
+    """Rows the plan read from `events` (returned plus filtered out), over all loops; Actual
+    Rows is a per-loop average, so this is approximate."""
+    here = (plan.get("Relation Name") == "events") * plan.get("Actual Loops", 0) * (
+        plan.get("Actual Rows", 0) + plan.get("Rows Removed by Filter", 0))
+    return here + sum(_events_read(p) for p in plan.get("Plans", []))
+
+
+def test_feature_events_reads_only_the_accounts_events(trained_world_db, topk_packs):
+    """Ruling BB: the query reads the account's own refs' events, not the whole tenant's."""
+    tid, db = tenant_id("hearthline"), trained_world_db["db"]
+    with owner_connect(trained_world_db["owner_dsn"], row_factory=dict_row) as conn:
+        tenant_events = conn.execute("SELECT count(*) AS n FROM events WHERE tenant_id = %s"
+                                     " AND type = ANY(%s)", (tid, evidence.SHOWN_TYPES)
+                                     ).fetchone()["n"]
+    with db.tenant_tx(tid) as conn:
+        for account, _ in topk_packs.values():
+            plan = conn.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + evidence.FEATURE_EVENTS,
+                                {"t": AS_OF, "now": clock.now(), "a": account,
+                                 "types": evidence.SHOWN_TYPES}).fetchone()
+            # the tenant scan read 13,290 rows here; an account's refs hold about 100 events
+            read = _events_read(next(iter(plan.values()))[0]["Plan"])
+            assert read < tenant_events / 20, (read, tenant_events)
 
 
 PLAYS = ["value_review", "support_escalation", "exec_check_in", "save_call",

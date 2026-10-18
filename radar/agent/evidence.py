@@ -275,6 +275,24 @@ SELECTORS = {"usage_drop": _usage, "seat_utilization": _usage,
              "seat_change_180d": _seat_change, "not_live_after_30d": _contract_start}
 
 
+# The account's refs as of the run (any link to it, then the ref's latest link must still be
+# to it), then their events: never the whole tenant's (Ruling BB). Both link lookups use
+# identity_links_ref_idx; `n` is the link usable now (Ruling AF).
+FEATURE_EVENTS = (
+    "WITH refs AS (SELECT DISTINCT account_ref FROM identity_links"
+    " WHERE account_id = %(a)s AND available_at <= %(t)s)"
+    " SELECT e.*, n.method, n.account_id AS link_account," + asof.ATTRS +
+    " FROM refs r JOIN LATERAL (SELECT account_id FROM identity_links l"
+    " WHERE l.account_ref = r.account_ref AND l.available_at <= %(t)s"
+    " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) l ON l.account_id = %(a)s"
+    " JOIN events e ON e.account_ref = r.account_ref"
+    " LEFT JOIN LATERAL (SELECT method, account_id FROM identity_links l"
+    " WHERE l.account_ref = e.account_ref AND l.available_at <= %(now)s"
+    " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) n ON true"
+    " WHERE e.type = ANY(%(types)s) AND e.available_at <= %(t)s AND e.occurred_at <= %(t)s"
+    " ORDER BY e.entity_id, e.occurred_at, e.version_key, e.id")
+
+
 def _feature_events(conn, account_id, score: dict, now) -> list[tuple[dict, str]]:
     """The events behind the score's top behavioural contributions, as they stood at its run's
     as_of: at most PER_FEATURE per feature and FEATURE_ITEMS in all, by contribution. Each
@@ -282,17 +300,8 @@ def _feature_events(conn, account_id, score: dict, now) -> list[tuple[dict, str]
     as_of = score["as_of"]
     # shortcut: links resolve to this account only, not through merges; add asof.resolver's
     # merge chain if merged accounts need their losers' events shown.
-    rows = conn.execute(
-        "SELECT e.*, n.method, n.account_id AS link_account," + asof.ATTRS +
-        " FROM events e JOIN LATERAL (SELECT account_id FROM identity_links l"
-        " WHERE l.account_ref = e.account_ref AND l.available_at <= %(t)s"
-        " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) l ON l.account_id = %(a)s"
-        " LEFT JOIN LATERAL (SELECT method, account_id FROM identity_links l"
-        " WHERE l.account_ref = e.account_ref AND l.available_at <= %(now)s"
-        " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) n ON true"
-        " WHERE e.type = ANY(%(types)s) AND e.available_at <= %(t)s AND e.occurred_at <= %(t)s"
-        " ORDER BY e.entity_id, e.occurred_at, e.version_key, e.id",
-        {"t": as_of, "now": now, "a": account_id, "types": SHOWN_TYPES}).fetchall()
+    rows = conn.execute(FEATURE_EVENTS, {"t": as_of, "now": now, "a": account_id,
+                                         "types": SHOWN_TYPES}).fetchall()
     mark = conn.execute("SELECT watermarks->>'product' AS m FROM score_runs WHERE id = %s",
                         (score["run_id"],)).fetchone()["m"]
     ctx = {"as_of": as_of, "product_mark": mark and datetime.fromisoformat(mark),
