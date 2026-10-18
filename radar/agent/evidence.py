@@ -121,7 +121,7 @@ def describe(e: dict, currency: str, cap: int | None = TEXT_CAP,
 
 def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[tuple]:
     """(source, kind, display) for the account, its score, what changed and the top
-    contributions."""
+    behavioural contributions."""
     term_end = ((score.get("context") or {}).get("term_end") or "unknown")[:10]
     out = [("crm", "account", f"{name}: ARR {_money(score.get('arr_minor'), currency)},"
             f" term ends {term_end}")]
@@ -134,7 +134,10 @@ def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[t
     out += [("radar", "change", f"{c['label']} moved from {c['shown_before']} to"
              f" {c['shown_after']} since the previous run")
             for c in scoring.material(changes["changed_features"], currency)][:TOP]
-    top = sorted((score["contributions"] or {}).items(), key=lambda kv: (-kv[1], kv[0]))
+    # behavioural terms only: structural ones stay collapsed, as in the Why panel (Ruling BF)
+    behavioural = {d.name for d in registry.FEATURES if d.kind == "behavioural"}
+    top = sorted(((n, c) for n, c in (score["contributions"] or {}).items() if n in behavioural),
+                 key=lambda kv: (-kv[1], kv[0]))
     out += [("radar", "contribution", f"{registry.LABELS[name]} is"
              f" {registry.shown(name, score['features'].get(name), currency)} and adds"
              f" {c:.2f} to the log-odds") for name, c in top if c >= scoring.NEGLIGIBLE][:TOP]

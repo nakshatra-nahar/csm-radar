@@ -550,9 +550,12 @@ def test_template_brief_uses_plain_labels_and_display_rounding():
     shown = [d for _, kind, d in evidence._score_items("Acme", SCORE, drift, "USD")
              if kind in ("change", "contribution")]
     assert not [d for d in shown if "moved from" in d]  # no material change
-    # tenure's +0.0012 is below what the Why panel shows, so the brief leaves it out too
-    assert shown == ["ARR is USD 10,000 and adds 0.31 to the log-odds",
-                     "days since customer email is 120 and adds 0.26 to the log-odds"]
+    # structural terms (ARR's +0.31, tenure) stay out, as in the Why panel (Ruling BF): the
+    # behavioural driver is listed even though ARR's term is larger
+    assert shown == ["days since customer email is 120 and adds 0.26 to the log-odds"]
+    structural = {**SCORE, "contributions": {"log_arr": 0.31, "term_end_within_60d": 0.23}}
+    assert not [d for _, kind, d in evidence._score_items("Acme", structural, drift, "USD")
+                if kind == "contribution"]
     real = {"changed_features": [{"name": "days_since_customer_email", "before": 30.0,
                                   "after": 120.0, "delta_contribution": 0.2}]}
     [change] = [d for _, kind, d in evidence._score_items("Acme", SCORE, real, "USD")

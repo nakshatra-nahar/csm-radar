@@ -14,6 +14,7 @@ from radar.agent.evidence import EXACT_METHODS, describe
 
 KINDS = {d.name: d.kind for d in registry.FEATURES}
 TIMELINE_ITEMS = 40
+DRIVER_FLOOR = 0.1  # log-odds: a smaller behavioural term does not explain a model slot
 
 
 def tenant(conn, tenant_id: UUID) -> dict:
@@ -76,18 +77,27 @@ def worklist_rows(conn, wl: dict, currency: str) -> list[dict]:
 
 
 def why_now(conn, row: dict, run_id: UUID, currency: str) -> str | None:
-    """The largest material change since the last run, else the largest positive contribution
-    (at least NEGLIGIBLE) with its value (Ruling AQ); None if there is neither."""
+    """The largest material change since the last run (Ruling AQ), else driver()."""
     changed = scoring.diff_runs(conn, row["account_id"], run_id)["changed_features"]
     if shown := scoring.material(changed, currency):
         c = shown[0]
         return (f"{c['label']} {'up' if c['delta_contribution'] > 0 else 'down'}:"
                 f" {c['shown_before']} → {c['shown_after']}")
-    up = [(c, f) for f, c in (row["contributions"] or {}).items() if c >= scoring.NEGLIGIBLE]
-    if not up:
-        return None
-    c, f = max(up)
-    return f"{registry.LABELS[f]}: {registry.shown(f, row['features'].get(f), currency)} ({c:+.2f})"
+    return driver(row, currency)
+
+
+def driver(row: dict, currency: str) -> str | None:
+    """The largest behavioural contribution with its value if it reaches DRIVER_FLOOR, else the
+    slot's expected ARR at risk (its sort key); structural terms never headline (Ruling BF)."""
+    up = [(c, f) for f, c in (row["contributions"] or {}).items()
+          if KINDS.get(f) == "behavioural" and c >= DRIVER_FLOOR]
+    if up:
+        c, f = max(up)
+        return (f"{registry.LABELS[f]}: {registry.shown(f, row['features'].get(f), currency)}"
+                f" ({c:+.2f})")
+    at_risk = row.get("expected_arr_at_risk_minor")
+    return None if at_risk is None else (
+        f"large account: expected ARR at risk {currency} {at_risk / 100:,.0f}")
 
 
 def book(conn, band: str | None) -> list[dict]:

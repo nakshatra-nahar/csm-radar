@@ -753,9 +753,26 @@ def test_tenure_drift_alone_is_no_material_change(web):
     assert not [s for s in template.render(pack)["summary"] if "moved from" in s["text"]]
     score = one(web, "SELECT features, contributions FROM latest_scores WHERE account_id = %s",
                 case["account_id"])
-    name, c = max(score["contributions"].items(), key=lambda kv: kv[1])
-    assert row["why_now"] == (f"{registry.LABELS[name]}:"
-                              f" {registry.shown(name, score['features'][name], 'USD')} ({c:+.2f})")
+    assert row["why_now"] == queries.driver({**score, "expected_arr_at_risk_minor":
+                                             row["expected_arr_at_risk_minor"]}, "USD")
+    assert "→" not in row["why_now"]
+
+
+def test_why_now_names_a_behavioural_driver_over_a_larger_structural_one():
+    row = {"contributions": {"log_arr": 0.9, "term_end_within_60d": 0.23,
+                             "days_since_customer_email": 0.26},
+           "features": {"log_arr": 11.5, "term_end_within_60d": 0.0,
+                        "days_since_customer_email": 120.0},
+           "expected_arr_at_risk_minor": 1_234_500}
+    assert queries.driver(row, "USD") == "days since customer email: 120 (+0.26)"
+
+
+def test_why_now_says_large_account_when_no_behavioural_driver_reaches_the_floor():
+    """Ruling BF: structural terms never headline a model slot; it is there for p x ARR."""
+    row = {"contributions": {"log_arr": 0.9, "term_end_within_60d": 0.23, "usage_drop": 0.05},
+           "features": {"log_arr": 11.5, "term_end_within_60d": 0.0, "usage_drop": 0.1},
+           "expected_arr_at_risk_minor": 1_234_500}
+    assert queries.driver(row, "USD") == "large account: expected ARR at risk USD 12,345"
 
 
 def test_why_hides_negligible_terms_but_the_trace_keeps_them(web):
