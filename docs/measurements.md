@@ -36,7 +36,7 @@ History records per source:
 
 Command: `radar bootstrap` with
 `RADAR_OWNER_DSN=postgresql://postgres:postgres@localhost:54329/radar_full`, on an empty
-database. The final rebuild (no Anthropic key set) took **374 s**. It applied 7 migrations and
+database. An earlier rebuild (no Anthropic key set, before the evidence-query fix) took **374 s**. It applied 7 migrations and
 ran 298 jobs. It ingested 140,130 hearthline records, 83,268 tallyworks records and 7,450
 kitewire records, and buffered 31,067 / 18,458 / 5,983 for later delivery.
 
