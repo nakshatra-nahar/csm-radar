@@ -231,8 +231,8 @@ OPS = {
     "sources": "SELECT * FROM source_status ORDER BY source",
     "quarantine": "SELECT reason, count(*) AS n FROM quarantine WHERE resolved_at IS NULL"
                   " GROUP BY reason ORDER BY n DESC, reason",
-    "links": "SELECT method, count(*) AS n FROM identity_links GROUP BY method"
-             " ORDER BY n DESC, method",
+    "links": "SELECT method, count(*) AS n, count(*)::float8 / sum(count(*)) OVER () AS share"
+             " FROM identity_links GROUP BY method ORDER BY n DESC, method",
     "jobs": "SELECT status, count(*) AS n FROM jobs GROUP BY status ORDER BY status",
     "agent": "SELECT at, action, entity_type, entity_id, after->>'status' AS status"
              " FROM audit_log WHERE actor = 'agent' ORDER BY at DESC, id DESC LIMIT 20",

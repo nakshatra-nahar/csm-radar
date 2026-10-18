@@ -3,6 +3,7 @@ webhooks and the tick endpoint, against the small trained world after a Monday s
 
 import dataclasses
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from radar import clock, registry
+from radar import clock, policy, registry
 from radar.agent import brief, handlers, jobs, worker
 from radar.agent.jobs import Job
 from radar.bootstrap import seed_tenants_and_users
@@ -523,6 +524,57 @@ def test_team_page_shows_the_manager_team_only(web):
     assert "SLA breaches" in page and "Overflow" in page and "Dismissed this week" in page
 
 
+def test_team_page_figures_match_the_database(web):
+    """web.csm's row and the team's ARR at risk equal what direct SQL says."""
+    case = new_case(web)
+    web.owner.execute("UPDATE cases SET sla_due_at = %s WHERE id = %s",
+                      (clock.now() - timedelta(days=1), case["id"]))
+    wl = one(web, "SELECT id FROM worklists WHERE user_id = %s AND week_start = %s",
+             web.csm, MONDAY.date())["id"]
+    extra = one(web, "INSERT INTO worklist_items (tenant_id, worklist_id, account_id, position,"
+                " kind, reason) SELECT %s, %s, a.id, 999, 'must_act', 'overflow:test'"
+                " FROM accounts a WHERE a.owner_user_id = %s AND NOT EXISTS (SELECT 1 FROM"
+                " worklist_items i WHERE i.worklist_id = %s AND i.account_id = a.id) LIMIT 1"
+                " RETURNING id", HEARTH, wl, web.csm, wl)["id"]
+    try:
+        _check_team_row(web, wl)
+    finally:
+        web.owner.execute("DELETE FROM worklist_items WHERE id = %s", (extra,))
+        web.owner.execute("DELETE FROM cases WHERE id = %s", (case["id"],))
+
+
+def _check_team_row(web, wl):
+    page = client_as(web, web.manager).get("/team").text
+    cur = one(web, "SELECT currency FROM tenants WHERE id = %s", HEARTH)["currency"]
+    money = lambda minor: f"{cur} {minor / 100:,.0f}"  # noqa: E731 - macros.money
+    csm = one(web, "SELECT name FROM users WHERE id = %s", web.csm)["name"]
+    cells = re.findall(r'<td class="n">(.*?)</td>', page.split(csm, 1)[1].split("</tr>", 1)[0])
+    books = {r["band"]: r for r in web.owner.execute(
+        "SELECT s.band, count(*) AS n, coalesce(sum(s.arr_minor), 0) AS arr FROM latest_scores s"
+        " JOIN accounts a ON a.id = s.account_id WHERE a.owner_user_id = %s"
+        " AND a.merged_into IS NULL AND NOT a.is_test GROUP BY s.band", (web.csm,)).fetchall()}
+    assert cells[:4] == [f'{books[b]["n"]}<span class="arr">{money(books[b]["arr"])}</span>'
+                         if b in books else "—" for b in ("red", "yellow", "green", "unknown")]
+    counts = one(web, "SELECT"
+                 " count(*) FILTER (WHERE c.kind = ANY(%s) AND c.status = 'open') AS must,"
+                 " count(*) FILTER (WHERE c.status = 'open' AND c.sla_due_at < %s) AS sla,"
+                 " count(*) FILTER (WHERE c.status = 'dismissed' AND c.closed_at >="
+                 " date_trunc('week', %s AT TIME ZONE t.timezone) AT TIME ZONE t.timezone) AS dis"
+                 " FROM cases c"
+                 " JOIN tenants t ON t.id = c.tenant_id WHERE c.owner_user_id = %s",
+                 list(policy.MUST_ACT), clock.now(), clock.now(), web.csm)
+    overflow = one(web, "SELECT count(*) AS n FROM worklist_items WHERE worklist_id = %s"
+                   " AND reason LIKE 'overflow:%%'", wl)["n"]
+    assert counts["sla"] >= 1 and overflow >= 1
+    assert cells[4:] == [str(counts["must"]), f'<span class="tag gap">{counts["sla"]} late</span>',
+                         str(overflow), str(counts["dis"])]
+    at_risk = one(web, "SELECT sum(s.expected_arr_at_risk_minor) AS v FROM latest_scores s"
+                  " JOIN accounts a ON a.id = s.account_id JOIN users u ON u.id = a.owner_user_id"
+                  " WHERE u.manager_id = %s AND u.active AND a.merged_into IS NULL"
+                  " AND NOT a.is_test", web.manager)["v"]
+    assert f"(p × ARR), this week</dt><dd>{money(at_risk)}</dd>" in page
+
+
 def test_team_page_lists_risky_accounts_without_a_working_owner(web):
     left = one(web, "INSERT INTO users (tenant_id, email, name, role, manager_id, active)"
                " VALUES (%s, %s, 'Departed Csm', 'csm', %s, false) RETURNING id", HEARTH,
@@ -556,7 +608,13 @@ def test_ops_page_and_incident_acknowledgement(web):
     for heading in ("Sources", "Quarantine", "Identity matches by method", "Jobs",
                     "LLM spend today", "Incidents", "Models", "Agent activity"):
         assert heading in page
-    assert "zendesk external id" in page or "domain" in page  # match methods counted
+    links = web.owner.execute("SELECT method, count(*) AS n FROM identity_links"
+                              " WHERE tenant_id = %s GROUP BY method", (HEARTH,)).fetchall()
+    total = sum(r["n"] for r in links)
+    assert total
+    for r in links:  # each method's count and its share of all links (design §9 match rates)
+        assert (f"<span>{r['method'].replace('_', ' ')}</span> <b class=\"n\">{r['n']}</b>"
+                f" ({r['n'] / total:.1%})") in page
     assert f"/admin/incidents/{incident}/ack" in page
     url = f"/admin/incidents/{incident}/ack"
     assert client_as(web, web.manager).post(url).status_code == 404
