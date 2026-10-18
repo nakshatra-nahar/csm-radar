@@ -1,4 +1,7 @@
-"""Opt-in smoke test against the real API: uv run pytest -m live_llm tests/test_llm_live.py"""
+"""Opt-in smoke test against the real API:
+RADAR_LIVE_LLM=1 uv run pytest -m live_llm tests/test_llm_live.py
+
+The env flag is required because any CLI -m replaces the pyproject addopts deselection."""
 
 import os
 from pathlib import Path
@@ -21,6 +24,7 @@ def _api_key() -> str | None:
 
 
 @pytest.mark.live_llm
+@pytest.mark.skipif(os.environ.get("RADAR_LIVE_LLM") != "1", reason="set RADAR_LIVE_LLM=1")
 def test_live_brief_on_the_injection_pack():
     key = _api_key()
     if key is None:

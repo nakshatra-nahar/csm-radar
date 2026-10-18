@@ -1,5 +1,7 @@
 import json
-from datetime import timedelta
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -328,3 +330,89 @@ def test_stale_pending_brief_is_taken_over(owner_conn, worker_db, brief_world):
                        (clock.now() - timedelta(seconds=301), brief_id))
     assert brief.generate_brief(worker_db, w["tid"], w["case"], None) == brief_id
     assert brief_row(owner_conn, brief_id)["status"] == "ready"
+
+
+def test_relinked_ref_is_not_customer_safe(owner_conn, worker_db, brief_world):
+    """Ruling AC (2): a ref re-linked to another account is never safe for this one's email."""
+    w = brief_world
+    other = owner_conn.execute(
+        "INSERT INTO accounts (tenant_id, sf_account_id, name) VALUES (%s, %s, 'Elsewhere')"
+        " RETURNING id", (w["tid"], uuid.uuid4().hex[:18])).fetchone()["id"]
+    owner_conn.execute(
+        "INSERT INTO identity_links (tenant_id, source, account_ref, account_id, method,"
+        " available_at) VALUES (%s, 'test', 'zd_org:1', %s, 'zendesk_external_id', %s)",
+        (w["tid"], other, clock.now() - timedelta(days=1)))
+    ticket = next(i for i in pack_of(worker_db, w).items if i.event_id == w["ticket"])
+    assert ticket.match_method == "zendesk_external_id" and not ticket.customer_safe
+
+
+@pytest.mark.parametrize(("text", "phone"), [
+    ("555-1234", True), ("555 1234", True), ("call 5555-1234 now", True),
+    ("+1 555 123 4567", True), ("2026-10-17", False), ("3.14", False),
+    ("1,200.00", False), ("2026-2027", False)])
+def test_phone_regex_catches_local_numbers_not_dates(text, phone):
+    assert bool(validate.PHONE_RE.search(text)) is phone
+
+
+AS_OF = datetime(2026, 10, 12, tzinfo=UTC)
+
+
+@pytest.fixture(scope="module")
+def topk_packs(trained_world_db):
+    """model_topk cases for hearthline's 20 highest-p accounts in a run at AS_OF: (run as_of,
+    {case: (account, pack)})."""
+    tid, db = tenant_id("hearthline"), trained_world_db["db"]
+    run = scoring.score_tenant(db, tid, AS_OF, "manual", True)
+    with owner_connect(trained_world_db["owner_dsn"], autocommit=True,
+                       row_factory=dict_row) as conn:
+        top = [r["account_id"] for r in conn.execute(
+            "SELECT account_id FROM account_scores WHERE run_id = %s AND p IS NOT NULL"
+            " ORDER BY p DESC, account_id LIMIT 20", (run,))]
+        cases = {add_case(conn, tid, a, "model_topk", None, []): a for a in top}
+    with db.tenant_tx(tid) as conn:
+        return {c: (a, build_pack(conn, tid, c)) for c, a in cases.items()}
+
+
+def test_topk_pack_cites_the_events_behind_its_contributions(trained_world_db, topk_packs):
+    """Ruling AC (1): model-ranked briefs can cite real tickets, usage months and emails,
+    each the account's own and visible at the run's as_of."""
+    tid = tenant_id("hearthline")
+    kinds = set()
+    with owner_connect(trained_world_db["owner_dsn"], row_factory=dict_row) as conn:
+        for account, pack in topk_packs.values():
+            evidence = [i for i in pack.items if i.event_id is not None]
+            assert len(evidence) <= 10
+            kinds |= {i.kind for i in evidence}
+            for it in evidence:
+                e = conn.execute("SELECT * FROM events WHERE tenant_id = %s AND id = %s",
+                                 (tid, it.event_id)).fetchone()
+                assert e["available_at"] <= AS_OF and e["occurred_at"] <= AS_OF
+                link = conn.execute(
+                    "SELECT account_id FROM identity_links WHERE tenant_id = %s AND"
+                    " account_ref = %s AND available_at <= %s ORDER BY available_at DESC,"
+                    " id DESC LIMIT 1", (tid, e["account_ref"], AS_OF)).fetchone()
+                assert link["account_id"] == account
+                if it.kind == "message":
+                    assert (e["attrs"].get("subject") or "\0") not in it.display
+                    assert it.display.startswith("Last customer email on")
+                if it.kind == "usage":
+                    assert re.fullmatch(r"Active users: \d+ in \w{3} \d{4} vs \d+ a month in"
+                                        r" \w{3}-\w{3}", it.display), it.display
+    assert {"ticket", "usage", "message"} <= kinds, kinds
+
+
+def test_topk_pack_hash_is_deterministic(trained_world_db, topk_packs):
+    tid, db = tenant_id("hearthline"), trained_world_db["db"]
+    with db.tenant_tx(tid) as conn:
+        for case, (_, pack) in topk_packs.items():
+            assert build_pack(conn, tid, case).hash() == pack.hash()
+
+
+def test_template_email_uses_customer_safe_displays(topk_packs):
+    for _, pack in topk_packs.values():
+        out = template.render(pack)
+        assert validate.check(json.dumps(out), "end_turn", pack)[1] == []
+        safe = [i for i in pack.items if i.customer_safe and i.trust == "system"]
+        if safe and out["email"]:
+            assert out["email"]["evidence_ids"] == [i.id for i in safe[:2]]
+            assert safe[0].display in out["email"]["body"]

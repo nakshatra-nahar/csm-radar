@@ -4,7 +4,8 @@ output fails validation twice. Same shape as validate.Brief."""
 from radar.agent.evidence import EvidencePack
 
 SIGN_OFF = "\n\nBest regards"
-# (subject, body) per play; plain words and no numbers, so it passes the validator.
+# (subject, body) per play; plain words and no numbers, so it passes the validator. Numbers
+# reach the email only inside the customer-safe display strings it quotes and cites.
 EMAILS = {
     "save_call": ("Can we talk this week?",
                   "Hi there,\n\nI would like to hear how things are going for your team and"
@@ -27,12 +28,17 @@ EMAILS = {
 
 def render(pack: EvidencePack) -> dict:
     """One summary point per system item, quoting its display string; customer text is left in
-    the evidence list (never repeated), and find_new_champion gets no email."""
+    the evidence list (never repeated). The email quotes up to two customer-safe system items
+    (an exact key to this account), and find_new_champion gets no email."""
     summary = [{"evidence_ids": [i.id], "text": i.display}
                for i in pack.items if i.trust == "system"][:5]
     email = None
     if pack.play in EMAILS:
         subject, body = EMAILS[pack.play]
-        email = {"subject": subject, "body": body + SIGN_OFF, "evidence_ids": []}
+        safe = [i for i in pack.items if i.customer_safe and i.trust == "system"][:2]
+        if safe:
+            body += "\n\nWhat I am looking at:\n" + "\n".join(f"- {i.display}" for i in safe)
+        email = {"subject": subject, "body": body + SIGN_OFF,
+                 "evidence_ids": [i.id for i in safe]}
     return {"summary": summary, "email": email,
             "insufficient_evidence": len(summary) < 2, "injection_suspected": False}
