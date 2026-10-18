@@ -3,7 +3,7 @@
 import dataclasses
 import os
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
 
@@ -17,6 +17,7 @@ from radar import clock, model
 from radar.agent import handlers
 from radar.agent.jobs import Job
 from radar.bootstrap import HISTORY_END, bootstrap, replay_feed, seed_tenants_and_users
+from radar.cli import main
 from radar.config import load_settings
 from radar.db import Database, owner_connect
 from radar.ingest import feed
@@ -120,38 +121,54 @@ def test_feed_tick_reads_the_buffer_when_feed_source_is_db(blank, small_world_di
         clock.unfreeze()
 
 
-def test_prune_keeps_frozen_and_latest_runs_and_deletes_the_rest(blank):
+def test_prune_keeps_frozen_latest_and_monday_runs_per_tenant(blank):
     dsn, db = blank
-    seed_tenants_and_users(dsn, db, ["kitewire"])
-    now = clock.now()
+    seed_tenants_and_users(dsn, db, ["hearthline", "kitewire"])
+    hearth, now = tenant_id("hearthline"), datetime(2026, 10, 17, 18, tzinfo=UTC)  # a Saturday
     with owner_connect(dsn, autocommit=True, row_factory=dict_row) as conn:
-        csm = conn.execute("SELECT id FROM users WHERE role = 'csm' LIMIT 1").fetchone()["id"]
-        account = conn.execute("INSERT INTO accounts (tenant_id, sf_account_id, name)"
-                               " VALUES (%s, 'A1', 'A') RETURNING id", (KITE,)).fetchone()["id"]
+        csm = conn.execute("SELECT id FROM users WHERE role = 'csm' AND tenant_id = %s"
+                           " LIMIT 1", (KITE,)).fetchone()["id"]
+        accounts = {t: conn.execute("INSERT INTO accounts (tenant_id, sf_account_id, name)"
+                                    " VALUES (%s, 'A1', 'A') RETURNING id", (t,)
+                                    ).fetchone()["id"] for t in (KITE, hearth)}
 
-        def run(days_ago, actionable):
-            at = now - timedelta(days=days_ago)
+        def run(tid, at, actionable, trigger="sweep"):
+            at = now - timedelta(days=at) if isinstance(at, int) else at
             rid = conn.execute(
                 "INSERT INTO score_runs (tenant_id, trigger, actionable, as_of, config_version,"
-                " status, finished_at) VALUES (%s, 'sweep', %s, %s, 1, 'done', %s)"
-                " RETURNING id", (KITE, actionable, at, at)).fetchone()["id"]
+                " status, finished_at) VALUES (%s, %s, %s, %s, 1, 'done', %s)"
+                " RETURNING id", (tid, trigger, actionable, at, at)).fetchone()["id"]
             conn.execute("INSERT INTO account_scores (tenant_id, run_id, account_id, as_of,"
-                         " eligible) VALUES (%s, %s, %s, %s, true)", (KITE, rid, account, at))
+                         " eligible) VALUES (%s, %s, %s, %s, true)",
+                         (tid, rid, accounts[tid], at))
             return rid
-        gone = [run(90, False), run(70, True)]
-        frozen, latest, recent = run(80, True), run(40, True), run(1, False)
+        # kitewire (Los Angeles): two old weekday runs go; a frozen run, the latest of each
+        # kind and a sweep on a local Monday (75 days back) stay
+        gone = [run(KITE, 90, False), run(KITE, 70, True)]
+        kept = [run(KITE, 80, True), run(KITE, 41, True), run(KITE, 1, False),
+                run(KITE, 75, True)]
         conn.execute("INSERT INTO worklists (tenant_id, user_id, week_start, run_id)"
-                     " VALUES (%s, %s, '2026-07-20', %s)", (KITE, csm, frozen))
-        assert prune(dsn, older_than_days=30) == {"kitewire": {"score_runs": 2,
-                                                               "account_scores": 2}}
+                     " VALUES (%s, %s, '2026-07-20', %s)", (KITE, csm, kept[0]))
+        # hearthline (New York): its latest runs are older than the cutoff and stay, as does
+        # a backfill run at Monday 00:00 UTC (Sunday evening in New York)
+        gone += [run(hearth, 65, False), run(hearth, 66, True)]
+        kept += [run(hearth, 60, True), run(hearth, 50, False),
+                 run(hearth, datetime(2026, 8, 10, tzinfo=UTC), False, "backfill")]
+        clock.freeze(now)
+        try:
+            counts = prune(dsn, older_than_days=30)
+        finally:
+            clock.unfreeze()
+        two = {"score_runs": 2, "account_scores": 2}
+        assert counts == {"hearthline": two, "kitewire": two}
         left = {r["id"] for r in conn.execute("SELECT id FROM score_runs")}
-        assert left == {frozen, latest, recent} and not left & set(gone)
-        assert conn.execute("SELECT count(*) AS n FROM account_scores").fetchone()["n"] == 3
-        audit = conn.execute("SELECT actor, after FROM audit_log WHERE action = 'prune'"
-                             ).fetchall()
-        assert audit == [{"actor": "system:prune",
-                          "after": {"score_runs": 2, "account_scores": 2,
-                                    "older_than_days": 30}}]
+        assert left == set(kept) and not left & set(gone)
+        assert conn.execute("SELECT count(*) AS n FROM account_scores").fetchone()["n"] == 7
+        audit = conn.execute("SELECT tenant_id, actor, after FROM audit_log"
+                             " WHERE action = 'prune' ORDER BY tenant_id").fetchall()
+        assert sorted([hearth, KITE]) == [a["tenant_id"] for a in audit]
+        assert all(a["actor"] == "system:prune" and a["after"] == two | {"older_than_days": 30}
+                   for a in audit)
         for role in ("radar_web", "radar_worker"):  # the app roles still cannot delete scores
             assert not conn.execute("SELECT has_table_privilege(%s, 'account_scores', 'DELETE')"
                                     " AS ok", (role,)).fetchone()["ok"]
@@ -244,3 +261,22 @@ def test_push_copies_every_row_once_and_refuses_a_loaded_target(booted, empty_ta
 def test_push_refuses_a_client_tool_of_the_wrong_version():
     with pytest.raises(PushError, match="pass --pg-bin"):
         _tool("pg_dump", PG_BIN, 99, 99)
+
+
+def test_train_retires_only_its_own_tenants_model(booted):
+    """Last in the module: it adds a model to booted."""
+    active = ("SELECT tenant_id, version FROM models WHERE status = 'active'"
+              " ORDER BY tenant_id")
+    with owner_connect(booted.dsn, row_factory=dict_row) as conn:
+        before = conn.execute(active).fetchall()
+    clock.freeze(HISTORY_END)
+    try:
+        main(["train", "--tenant", "hearthline"])
+    finally:
+        clock.unfreeze()
+    with owner_connect(booted.dsn, row_factory=dict_row) as conn:
+        after = conn.execute(active).fetchall()
+    hearth = tenant_id("hearthline")
+    assert [r for r in after if r["tenant_id"] != hearth] == [
+        r for r in before if r["tenant_id"] != hearth] != []
+    assert [r["version"] for r in after if r["tenant_id"] == hearth] == [2]  # per tenant

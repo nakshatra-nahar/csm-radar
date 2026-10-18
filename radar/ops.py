@@ -18,11 +18,16 @@ from radar.db import Database, owner_connect
 from radar.migrate import migrate
 
 # The runs the app still reads: the latest done run of each kind (latest_scores reads the
-# actionable one), any run still being written, and every run a worklist was frozen from.
+# actionable one), any run still being written, every run a worklist was frozen from, and the
+# Monday runs history reads (Ruling AM): sweeps on the tenant's local Monday and backfill runs,
+# which are Mondays 00:00 UTC. tenant_id is explicit: the owner role bypasses RLS.
 PRUNABLE = """
-SELECT id FROM score_runs r WHERE as_of < %s AND status <> 'running'
+SELECT id FROM score_runs r WHERE tenant_id = %(t)s AND as_of < %(cutoff)s
+  AND status <> 'running' AND trigger <> 'backfill'
+  AND extract(isodow FROM as_of AT TIME ZONE %(tz)s) <> 1
   AND NOT EXISTS (SELECT 1 FROM worklists w WHERE w.run_id = r.id)
-  AND id NOT IN (SELECT DISTINCT ON (actionable) id FROM score_runs WHERE status = 'done'
+  AND id NOT IN (SELECT DISTINCT ON (actionable) id FROM score_runs
+                 WHERE tenant_id = %(t)s AND status = 'done'
                  ORDER BY actionable, as_of DESC, finished_at DESC, id)
 """
 
@@ -31,18 +36,22 @@ def prune(owner_dsn: str, older_than_days: int) -> dict[str, dict[str, int]]:
     """Delete the account_scores and score_runs of runs older than the cutoff that nothing
     reads, one audited transaction per tenant; returns the counts per tenant slug."""
     cutoff, out = clock.now() - timedelta(days=older_than_days), {}
-    db = Database(owner_dsn, max_size=1)  # tenant_tx: RLS scopes each tenant's deletes
+    db = Database(owner_dsn, max_size=1)
     try:
         with db.system_tx() as conn:
-            tenants = conn.execute("SELECT id, slug FROM tenants ORDER BY slug").fetchall()
+            tenants = conn.execute(
+                "SELECT id, slug, timezone FROM tenants ORDER BY slug").fetchall()
         for t in tenants:
             with db.tenant_tx(t["id"], actor="system:prune") as conn:
-                runs = [r["id"] for r in conn.execute(PRUNABLE, (cutoff,))]
+                runs = [r["id"] for r in conn.execute(
+                    PRUNABLE, {"t": t["id"], "tz": t["timezone"], "cutoff": cutoff})]
                 counts = {
                     "score_runs": len(runs),
                     "account_scores": conn.execute(
-                        "DELETE FROM account_scores WHERE run_id = ANY(%s)", (runs,)).rowcount}
-                conn.execute("DELETE FROM score_runs WHERE id = ANY(%s)", (runs,))
+                        "DELETE FROM account_scores WHERE tenant_id = %s AND run_id = ANY(%s)",
+                        (t["id"], runs)).rowcount}
+                conn.execute("DELETE FROM score_runs WHERE tenant_id = %s AND id = ANY(%s)",
+                             (t["id"], runs))
                 conn.execute(
                     "INSERT INTO audit_log (at, actor, action, entity_type, after)"
                     " VALUES (%s, 'system:prune', 'prune', 'score_runs', %s)",

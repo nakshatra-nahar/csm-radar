@@ -1,5 +1,5 @@
-"""The `radar` console script. DSNs come from Settings; only migrate, seed, bootstrap, train,
-prune and push use the owner DSN."""
+"""The `radar` console script. DSNs come from Settings; only migrate, seed, bootstrap, prune
+and push use the owner DSN."""
 
 import argparse
 import json
@@ -41,7 +41,7 @@ def _seed(a, s: Settings) -> None:
 
 
 def _train(a, s: Settings) -> None:
-    db = Database(s.owner_dsn)
+    db = _worker_db(s)  # RLS keeps the retire and the version count to this tenant
     try:
         _print({"model_id": train_and_promote(db, tenant_id(a.tenant), clock.now())})
     finally:
