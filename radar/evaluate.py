@@ -14,13 +14,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from radar import diagnostics, model, policy
-from radar.asof import Frames, load_frames, resolver
+from radar.asof import Frames, latest, load_frames, resolver
 from radar.bootstrap import HISTORY_END
 from radar.config import load_settings
 from radar.db import Database
@@ -30,7 +31,7 @@ from radar.registry import FEATURE_NAMES, FEATURES, rules_score
 from radar.sim.params import PARAMS
 from radar.tenants import TENANTS, tenant_id
 
-__all__ = ["rules_score", "topk_by_book", "slot_floor", "run", "acceptance",
+__all__ = ["rules_score", "topk_by_book", "slot_floor", "current_state", "run", "acceptance",
            "render_model_card"]
 
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]
@@ -112,6 +113,30 @@ def _oracle_fit(train: pd.DataFrame, test: pd.DataFrame, accounts, weekly) -> np
     return lr.predict_proba(Xt.fillna(X.mean()))[:, 1]
 
 
+def current_state(rows: pd.DataFrame, frames: Frames) -> pd.DataFrame:
+    """rows with the structural features re-read from each account's Salesforce row as it
+    stands at history end (Type, ARR__c, Renewal_Date__c), plus former_customer: what a naive
+    pipeline that joins today's CRM table to old snapshots would train on."""
+    sf = latest(frames.events[frames.events["type"] == "crm.account"], HISTORY_END)
+    ids = sf["entity_id"].str.removeprefix("sf_account:").map(
+        frames.accounts.set_index("sf_account_id")["id"])
+    now = sf.set_index(ids).reindex(rows.index.get_level_values("account_id"))
+    T = rows.index.get_level_values("as_of")
+    arr, renewal = now["arr_minor"].astype(float), now["renewal_date"]
+    return rows.assign(
+        log_arr=np.log(arr.where(arr > 0) / 100).to_numpy(),
+        term_end_within_60d=((renewal - T) <= pd.Timedelta(days=60)).astype(float)
+        .where(renewal.notna()).to_numpy(),
+        former_customer=(now["status"] == "Former Customer").astype(float).to_numpy())
+
+
+def _naive_fit(train: pd.DataFrame, test: pd.DataFrame, frames: Frames) -> np.ndarray:
+    cols = [*FEATURE_NAMES, "former_customer"]
+    X = current_state(train, frames)[cols]
+    lr = make_pipeline(SimpleImputer(), StandardScaler(), LogisticRegression(max_iter=2000))
+    return lr.fit(X, train["label"]).predict_proba(current_state(test, frames)[cols])[:, 1]
+
+
 def _without(group: str) -> list[str]:
     return [d.name for d in FEATURES if group not in d.source.split("+")]
 
@@ -152,6 +177,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
             model=model.predict(artifacts[origin], test)[0], rules=rules_score(test),
             gbm=gbm.predict_proba(test[FEATURE_NAMES])[:, 1],
             hindsight=model.predict(hind_model, hind.reindex(test.index))[0],
+            naive=_naive_fit(train, test, frames),
             **{f"without_{g}": model.predict(model.fit(train, _without(g)), test)[0]
                for g in GROUPS},
             **{f"c_{c}": model.predict(model.fit(train, C=c), test)[0] for c in C_GRID})
@@ -171,7 +197,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     t["w_renewal_sort"] = _rank(t, t["renewal"]) <= k
     t["w_arr_sort"] = _rank(t, arr) <= k
     scores = {"renewal_sort": t["renewal"], "arr_sort": arr}
-    for p in ("rules", "model", "oracle", "gbm", *(f"without_{g}" for g in GROUPS),
+    for p in ("rules", "model", "oracle", "gbm", "naive", *(f"without_{g}" for g in GROUPS),
               *(f"c_{c}" for c in C_GRID)):
         if p in t:
             t[f"w_{p}"] = topk_by_book(t, p, k, slot_floor(t, p, tenant["config"]))
@@ -195,7 +221,10 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
         "ci": _ci(t, np.random.default_rng(0)),
         "reliability": _reliability(t), "lead_time": _lead_time(t),
         "hindsight_vs_pit": {"pit_auc": policies["model"]["roc_auc"],
-                             "hindsight_auc": float(roc_auc_score(t["label"], t["hindsight"]))},
+                             "hindsight_auc": float(roc_auc_score(t["label"], t["hindsight"])),
+                             "naive_auc": float(roc_auc_score(t["label"], t["naive"])),
+                             "pit_recall_at_k_arr": recall,
+                             "naive_recall_at_k_arr": recall_of("naive")},
         "ablation": {g: {"recall_at_k_arr": a, "delta": a - recall} for g, a in ablated.items()},
         "c_sensitivity": {str(c): recall if c == 1.0 else recall_of(f"c_{c}")
                           for c in sorted((1.0, *C_GRID))},
@@ -216,6 +245,9 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
             train_all, frames.accounts, truth["weekly"])
         sf = frames.accounts.set_index("id")["sf_account_id"]
         result["by_cause"] = _by_cause(t, truth["accounts"], sf)
+        churned = truth["accounts"].dropna(subset=["decision_at"])
+        result["unforecastable_share"] = float(churned.loc[~churned["involuntary"],
+                                                           "unforecastable"].mean())
         result["vp_cases"] = _vp_cases(feats, artifacts, truth["accounts"], sf, k)
         result["identity"] = _identity(frames, truth["identity"])
     return result
@@ -451,7 +483,7 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     violations = acceptance(r)
     out = [f"# Model card: {tenant_slug}", "",
            f"Generated by `radar eval --tenant {tenant_slug}` from the synthetic world. Each"
-           f" CSM works the top {k} accounts in their book each week.", ""]
+           f" CSM works up to {k} accounts from their book each week.", ""]
 
     def section(title: str, *lines: str) -> None:
         assert title in SECTIONS
@@ -493,7 +525,10 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     section("Recall@K by policy",
             "Recall (ARR-weighted) and precision are computed each week across every CSM's"
             " book, then averaged over test weeks. Lift is precision over the base rate."
-            " Every policy ranks the same rows.", "",
+            " Every policy ranks the same rows. As served, a slot takes only an account at or"
+            " above the slot floor (lift at least min_slot_lift; for the rules heuristic,"
+            " rules_score at the yellow cut), so a book can get fewer than K; random and the"
+            " sorts have no floor.", "",
             "| policy | recall@K (95% CI) | precision@K | lift | ROC-AUC | PR-AUC | Brier |",
             "|---|---|---|---|---|---|---|",
             *[f"| {LABELS[name]} | {_ci_text(ci['recall'][name])} | {_pct(m['precision_at_k'])}"
@@ -525,7 +560,9 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
         pooled = causes["all unforecastable"]
         section("Recall by churn cause",
                 "Causes marked * are drawn independently of account health (acquired, business"
-                " closed, ...). They should sit near random: a large gap would mean leakage.",
+                " closed, ...). They should sit near random: a large gap would mean leakage."
+                f" They are {_pct(r['unforecastable_share'])} of this tenant's voluntary churn"
+                " decisions in the simulator's truth.",
                 "", "| cause | decisions | model recall | random recall |", "|---|---|---|---|",
                 *[f"| {c}{' *' if v['unforecastable'] else ''} | {v['decisions']} |"
                   f" {_pct(v['recall_at_k_arr'])} | {_pct(v['random_recall'])} |"
@@ -535,10 +572,19 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
                 f" random {_pct(pooled['random_recall'])} ({pooled['decisions']} decisions).")
     h = r["hindsight_vs_pit"]
     section("Leakage check: hindsight vs point-in-time",
-            f"Model ROC-AUC with features as they were known at each snapshot:"
-            f" {h['pit_auc']:.3f}. With hindsight features that ignore when data arrived:"
-            f" {h['hindsight_auc']:.3f}. The difference ({h['hindsight_auc'] - h['pit_auc']:+.3f})"
-            " is the optimism a pipeline without the as-of rule would report.")
+            "| features | recall@K | ROC-AUC |", "|---|---|---|",
+            f"| point-in-time (deployed) | {_pct(h['pit_recall_at_k_arr'])} |"
+            f" {h['pit_auc']:.3f} |",
+            f"| hindsight: late data arrives on time | | {h['hindsight_auc']:.3f} |",
+            f"| naive current-state: today's Salesforce row | {_pct(h['naive_recall_at_k_arr'])}"
+            f" | {h['naive_auc']:.3f} |", "",
+            "Hindsight features use every record as if it had arrived when it happened:"
+            f" {h['hindsight_auc'] - h['pit_auc']:+.3f} AUC, so late arrivals barely change"
+            " this world's weekly snapshots.",
+            "The naive current-state model reads Type, ARR__c and Renewal_Date__c as they"
+            " stand at history end into every snapshot, so a churned account is already a"
+            f" Former Customer; its {h['naive_auc'] - h['pit_auc']:+.3f} AUC is the optimism"
+            " the as-of rule prevents.")
     section("Ablation: which sources matter",
             "Each source's features removed in turn, model refit at every origin. A bigger"
             " drop means the integration matters more.", "",
@@ -597,6 +643,9 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             "- Seat changes carry weak signal: seat_change_180d alone has ROC-AUC"
             f" {d['single_auc']['seat_change_180d']:.2f}. usage_drop also moves when a customer"
             " cuts seats, so some seat-cut risk shows up as a usage drop.",
+            "- Capacity is a cap: a slot never goes to an account below the base rate. A large"
+            " account with a low p drops off the list even when its expected ARR at risk"
+            " would rank it in, and a healthy book gets fewer than K.",
             "- Gradient boosting is a diagnostic row: does the linear model miss structure? It"
             " has no serving path.",
             "- Causes with few decisions have noisy recall. The world is synthetic: these"
