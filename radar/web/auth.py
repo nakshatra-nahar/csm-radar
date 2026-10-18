@@ -1,5 +1,6 @@
 """Login with the shared demo passcode, then a demo user (design §9). The signed session holds
-the user, tenant and role; no request ever takes them from the URL, query or form."""
+the user and tenant ids only; role and name are read from users on every request, and no
+request ever takes any of them from the URL, query or form."""
 
 import hmac
 from pathlib import Path
@@ -98,13 +99,12 @@ def choose_user(request: Request, user: str = Form("")):
     except ValueError:
         raise HTTPException(400) from None
     with request.app.state.db.tenant_tx(tid) as conn:
-        row = conn.execute("SELECT id, tenant_id, role, name FROM users WHERE id = %s"
+        row = conn.execute("SELECT id, tenant_id FROM users WHERE id = %s"
                            " AND active", (uid,)).fetchone()
     if row is None:
         raise HTTPException(400)
     request.session.clear()
-    request.session.update({"user_id": str(row["id"]), "tenant_id": str(row["tenant_id"]),
-                            "role": row["role"], "name": row["name"]})
+    request.session.update({"user_id": str(row["id"]), "tenant_id": str(row["tenant_id"])})
     return RedirectResponse("/week", status_code=303)
 
 
