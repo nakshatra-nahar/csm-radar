@@ -25,6 +25,8 @@ from radar.ingest.normalize import (
     source_record_id,
 )
 
+COUNTERS = ("received", "accepted", "duplicates", "conflicts", "twins")  # summed per source
+
 
 @dataclass
 class IngestStats:
@@ -37,7 +39,7 @@ class IngestStats:
     triggers: list[UUID] = field(default_factory=list)  # accounts needing rule evaluation
 
     def __iadd__(self, other: "IngestStats") -> "IngestStats":
-        for name in ("received", "accepted", "duplicates", "conflicts", "twins"):
+        for name in COUNTERS:
             setattr(self, name, getattr(self, name) + getattr(other, name))
         self.quarantined = _merge(self.quarantined, other.quarantined)
         self.triggers += [a for a in other.triggers if a not in self.triggers]
@@ -375,7 +377,7 @@ class _Run:
                 cur.executemany(EVENT_INSERT, self.events)
         stats = IngestStats(triggers=self.triggers)
         for source, counts in self.counts.items():
-            for name in ("received", "accepted", "duplicates", "conflicts", "twins"):
+            for name in COUNTERS:
                 setattr(stats, name, getattr(stats, name) + counts.get(name, 0))
             stats.quarantined = _merge(stats.quarantined, counts.get("quarantined", {}))
             self.conn.execute(
