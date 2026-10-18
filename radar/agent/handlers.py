@@ -19,8 +19,6 @@ from radar.features import rule_facts
 from radar.ingest import feed
 from radar.scoring import ManifestMismatch, score_tenant
 
-CADENCE = {"stripe": timedelta(hours=1), "zendesk": timedelta(hours=1),
-           "gmail": timedelta(hours=1), "salesforce": timedelta(hours=26)}
 PRODUCT_DUE_DAY, PRODUCT_GRACE_DAYS = 3, 3  # the monthly batch is due on the 3rd, + 3 days
 
 
@@ -80,19 +78,17 @@ def generate_brief(db: Database, job: Job) -> None:
 
 
 def sla_check(db: Database, job: Job) -> None:
-    """Escalate each of the tenant's open cases past its SLA once: escalated_at, an audit
-    row, and the manager's next digest (which lists cases escalated since the last one)."""
+    """Escalate each of the tenant's open cases past its SLA once: escalated_at (the cases
+    trigger writes its one audit row) and the next manager digest, which lists cases
+    escalated since the last one (unowned cases go to the admin's). Then source freshness,
+    hourly, so a source_stale incident opens and closes within the hour."""
     now = clock.now()
     with db.tenant_tx(job.tenant_id, actor="agent") as conn:
-        for c in conn.execute(
-                "UPDATE cases SET escalated_at = %s WHERE status = 'open'"
-                " AND sla_due_at < %s AND escalated_at IS NULL"
-                " RETURNING id, kind, sla_due_at", (now, now)).fetchall():
-            conn.execute(
-                "INSERT INTO audit_log (at, actor, action, entity_type, entity_id, after)"
-                " VALUES (%s, 'agent', 'sla_escalated', 'cases', %s, %s)",
-                (now, str(c["id"]), Jsonb({"kind": c["kind"],
-                                           "sla_due_at": c["sla_due_at"].isoformat()})))
+        conn.execute("UPDATE cases SET escalated_at = %s WHERE status = 'open'"
+                     " AND sla_due_at < %s AND escalated_at IS NULL", (now, now))
+        cfg = conn.execute("SELECT config FROM tenants WHERE id = %s",
+                           (job.tenant_id,)).fetchone()["config"]
+        check_freshness(conn, now, cfg["freshness_hours"])
 
 
 def _product_window(now: datetime) -> tuple[datetime, datetime]:
@@ -105,32 +101,34 @@ def _product_window(now: datetime) -> tuple[datetime, datetime]:
     return since, since + grace
 
 
-def _expected_by(source: str, last: datetime | None, now: datetime) -> datetime | None:
+def _expected_by(source: str, last: datetime | None, now: datetime,
+                 hours: dict) -> datetime | None:
     if source == "product":
         return _product_window(now)[1]
-    return last and last + CADENCE[source]
+    return last and last + timedelta(hours=hours[source])
 
 
-def is_stale(source: str, last: datetime | None, now: datetime) -> bool:
-    """Source freshness v1 (design §5.2), on the latest available_at delivered."""
+def is_stale(source: str, last: datetime | None, now: datetime, hours: dict) -> bool:
+    """Source freshness v1 (design §5.2, Ruling AH), on the latest available_at delivered;
+    `hours` is the tenant's config['freshness_hours']."""
     if last is None:
         return True
     if source == "product":
         return last < _product_window(now)[0]
-    return now > last + CADENCE[source]
+    return now > last + timedelta(hours=hours[source])
 
 
-def check_freshness(conn, now: datetime) -> None:
+def check_freshness(conn, now: datetime, hours: dict) -> None:
     """One open source_stale incident per stale source (the My Week banner reads it); it
-    closes when the source catches up."""
+    closes when the source catches up. Run by the hourly sla_check and the daily sweep."""
     for s in conn.execute("SELECT source, last_deliver_at FROM source_status"
                           " ORDER BY source").fetchall():
         source, last = s["source"], s["last_deliver_at"]
-        if not is_stale(source, last, now):
+        if not is_stale(source, last, now, hours):
             conn.execute("UPDATE incidents SET closed_at = %s WHERE kind = 'source_stale'"
                          " AND source = %s AND closed_at IS NULL", (now, source))
             continue
-        expected = _expected_by(source, last, now)
+        expected = _expected_by(source, last, now, hours)
         conn.execute(
             "INSERT INTO incidents (kind, source, details, opened_at)"
             " VALUES ('source_stale', %s, %s, %s) ON CONFLICT (tenant_id, kind, source)"
@@ -148,7 +146,8 @@ def _digest(conn, user_id, kind: str, subject: str, lines: list[str], now: datet
 
 def _write_digests(conn, week_start: date, now: datetime) -> None:
     """A plain-text digest to each CSM whose list froze now, and to each manager: the team's
-    lists, then the cases escalated since that manager's previous digest."""
+    lists, then the cases escalated since that manager's previous digest. The admin's digest
+    takes the escalations no manager would see (no owner, or an owner without a manager)."""
     lists = conn.execute(
         "SELECT w.id, w.user_id, u.name, u.manager_id FROM worklists w JOIN users u"
         " ON u.id = w.user_id WHERE w.week_start = %s AND w.frozen_at = %s ORDER BY u.name",
@@ -163,16 +162,18 @@ def _write_digests(conn, week_start: date, now: datetime) -> None:
                 [f"Week of {week_start}: {len(items)} accounts.", "", *items], now)
         team.setdefault(w["manager_id"], []).extend(
             ["", f"{w['name']} ({len(items)} accounts)", *items])
-    for m in conn.execute("SELECT id FROM users WHERE role = 'manager' AND active"
+    for m in conn.execute("SELECT id, role = 'admin' AS admin FROM users"
+                          " WHERE role IN ('manager', 'admin') AND active"
                           " ORDER BY email").fetchall():
         late = [f"  - {c['name']}: {c['kind']}, due {c['sla_due_at']:%Y-%m-%d %H:%M} UTC"
                 for c in conn.execute(
                     "SELECT a.name, c.kind, c.sla_due_at FROM cases c JOIN accounts a"
-                    " ON a.id = c.account_id JOIN users u ON u.id = c.owner_user_id"
-                    " WHERE u.manager_id = %(m)s AND c.escalated_at <= %(now)s"
+                    " ON a.id = c.account_id LEFT JOIN users u ON u.id = c.owner_user_id"
+                    " WHERE (u.manager_id = %(m)s OR (%(admin)s AND u.manager_id IS NULL))"
+                    " AND c.escalated_at <= %(now)s"
                     " AND c.escalated_at > COALESCE((SELECT max(created_at) FROM outbox"
                     "  WHERE kind = 'manager_digest' AND to_user_id = %(m)s), '-infinity')"
-                    " ORDER BY c.sla_due_at", {"m": m["id"], "now": now})]
+                    " ORDER BY c.sla_due_at", {"m": m["id"], "admin": m["admin"], "now": now})]
         _digest(conn, m["id"], "manager_digest", f"Your team for the week of {week_start}",
                 [f"Week of {week_start}.", *team.get(m["id"], []), "",
                  "Past due (escalated since your last digest):", *(late or ["  none"])], now)
@@ -180,20 +181,24 @@ def _write_digests(conn, week_start: date, now: datetime) -> None:
 
 def daily_sweep(db: Database, job: Job) -> None:
     """Score every account, recheck every rule, open cases, and on the tenant's Monday freeze
-    the lists and send the digests; briefs for new cases and frozen model slots. Payload
-    {'bootstrap': true} opens the first backlog past the breaker, audited (Ruling AB)."""
+    the lists and send the digests; briefs for new cases and frozen model slots. The day is
+    the scheduled local date (payload 'period'), so a Monday sweep retried after local
+    midnight still freezes Monday's week. Payload {'bootstrap': true} opens the first
+    backlog past the breaker, audited, once per tenant (Rulings AB, AK)."""
     tid, now = job.tenant_id, clock.now()
-    bootstrap = bool(job.payload.get("bootstrap"))
     try:
         run_id = score_tenant(db, tid, now, trigger="sweep", actionable=True)
     except ManifestMismatch:  # scoring fails closed with its incident; the rules still run
         run_id = None
     tenant, hits = _facts(db, tid, now)
     cfg = tenant["config"]
-    local = now.astimezone(ZoneInfo(cfg["timezone"]))
-    week = local.date()
+    week = (date.fromisoformat(job.payload["period"]) if "period" in job.payload
+            else now.astimezone(ZoneInfo(cfg["timezone"])).date())
     with db.tenant_tx(tid, actor="agent") as conn:
-        _lock(conn, tid)
+        _lock(conn, tid)  # held, so two bootstrap sweeps cannot both see no audit row
+        bootstrap = bool(job.payload.get("bootstrap")) and conn.execute(
+            "SELECT 1 FROM audit_log WHERE action = 'bootstrap_backlog' LIMIT 1"
+        ).fetchone() is None
         briefs = policy.open_cases(conn, tid, hits,
                                    f"run:{run_id}" if run_id else f"sweep:{week}", now, cfg,
                                    breaker=not bootstrap)
@@ -203,7 +208,7 @@ def daily_sweep(db: Database, job: Job) -> None:
                 " VALUES (%s, 'agent', 'bootstrap_backlog', 'score_runs', %s, %s)",
                 (now, run_id and str(run_id), Jsonb({"count": len(briefs)})))
         # no run, no freeze: a list is never frozen from stale or missing scores
-        if (run_id and local.weekday() == 0
+        if (run_id and week.weekday() == 0
                 and policy.freeze_worklists(conn, tid, run_id, week, now, cfg)):
             _write_digests(conn, week, now)
             briefs += [r["case_id"] for r in conn.execute(
@@ -211,7 +216,7 @@ def daily_sweep(db: Database, job: Job) -> None:
                 " ON w.id = i.worklist_id WHERE w.week_start = %s AND w.frozen_at = %s"
                 " AND i.kind = 'model'", (week, now))]
         _enqueue_briefs(conn, tid, briefs)
-        check_freshness(conn, now)
+        check_freshness(conn, now, cfg["freshness_hours"])
 
 
 HANDLERS: dict[str, Callable[[Database, Job], None]] = {

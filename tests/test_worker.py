@@ -224,7 +224,7 @@ def test_monday_sweep_freezes_worklists_and_digests(world):
     csms = rows(world.owner, "SELECT id, manager_id FROM users WHERE tenant_id = %s"
                 " AND role = 'csm' AND active", TALLY)
     managers = rows(world.owner, "SELECT id FROM users WHERE tenant_id = %s"
-                    " AND role = 'manager'", TALLY)
+                    " AND role IN ('manager', 'admin')", TALLY)  # the admin: unowned cases
     lists = rows(world.owner, "SELECT user_id FROM worklists WHERE week_start = %s", week)
     assert sorted(w["user_id"] for w in lists) == sorted(c["id"] for c in csms)
     digests = rows(world.owner, "SELECT * FROM outbox WHERE kind <> 'customer_email'")
@@ -262,14 +262,19 @@ def test_sla_escalation_fires_exactly_once(world):
     case = must_act(world.owner)[0]
     world.owner.execute("UPDATE cases SET sla_due_at = %s WHERE tenant_id = %s AND id = %s",
                         (T0 + timedelta(minutes=30), TALLY, case["id"]))
+    def audit():
+        return rows(world.owner, "SELECT * FROM audit_log WHERE entity_id = %s ORDER BY id",
+                    str(case["id"]))
+    before = len(audit())
     for hours in (1, 2, 3):
         drain(world.db, T0 + timedelta(hours=hours))
     row = world.owner.execute("SELECT escalated_at FROM cases WHERE tenant_id = %s"
                               " AND id = %s", (TALLY, case["id"])).fetchone()
     assert row["escalated_at"] == T0 + timedelta(hours=1)
-    audit = rows(world.owner, "SELECT at, after FROM audit_log WHERE action = 'sla_escalated'"
-                 " AND entity_id = %s", str(case["id"]))
-    assert [a["at"] for a in audit] == [T0 + timedelta(hours=1)]
+    written = audit()[before:]  # the cases trigger's row is the escalation's only audit row
+    assert [(a["action"], a["actor"]) for a in written] == [("update", "agent")]
+    assert written[0]["before"]["escalated_at"] is None
+    assert written[0]["after"]["escalated_at"] is not None
 
 
 def test_handler_failure_retries_then_dead(empty, monkeypatch):
@@ -302,32 +307,33 @@ def test_reaper_fails_score_runs_stuck_past_30_minutes(world):
 
 
 def test_stale_source_opens_one_incident(world):
-    """Every source fresh but Zendesk, which stops delivering: one source_stale incident,
-    however many sweeps see it, with the data My Week's banner shows; it closes itself once
-    Zendesk catches up."""
-    fresh = {"stripe": T0, "gmail": T0, "salesforce": T0 - timedelta(hours=25),
-             "product": datetime(2026, 10, 3, 9, tzinfo=UTC), "zendesk": T0}
-    world.owner.execute("UPDATE source_status SET last_deliver_at = (%s::jsonb ->> source)"
-                        "::timestamptz WHERE tenant_id = %s",
-                        (json.dumps({k: v.isoformat() for k, v in fresh.items()}), TALLY))
-    stop = T0 - timedelta(hours=1, minutes=1)
-    world.owner.execute("UPDATE source_status SET last_deliver_at = %s WHERE tenant_id = %s"
-                        " AND source = 'zendesk'", (stop, TALLY))
+    """Freshness thresholds come from tenants.config['freshness_hours'] and are checked by the
+    hourly sla_check too: Zendesk past its threshold opens one source_stale incident within
+    the hour, with the data My Week's banner shows, and it closes within the hour once the
+    source is fresh again."""
+    def zendesk_hours(h):
+        world.owner.execute("UPDATE tenants SET config = jsonb_set(config,"
+                            " '{freshness_hours,zendesk}', %s::jsonb) WHERE id = %s",
+                            (json.dumps(h), TALLY))
 
-    def check(at):
-        with world.db.tenant_tx(TALLY) as conn:
-            handlers.check_freshness(conn, at)
-        return rows(world.owner, "SELECT * FROM incidents WHERE kind = 'source_stale'")
-    for at in (T0, T0 + timedelta(minutes=1)):  # two sweeps see it
-        incidents = check(at)
-    assert [(i["source"], i["opened_at"], i["closed_at"]) for i in incidents] == [
-        ("zendesk", T0, None)]
-    assert incidents[0]["details"] == {"last_available_at": stop.isoformat(),
-                                       "expected_by": (stop + timedelta(hours=1)).isoformat()}
+    def stale():
+        return rows(world.owner, "SELECT * FROM incidents WHERE kind = 'source_stale'"
+                    " AND source = 'zendesk'")
     world.owner.execute("UPDATE source_status SET last_deliver_at = %s WHERE tenant_id = %s"
-                        " AND source = 'zendesk'", (T0 + timedelta(minutes=2), TALLY))
-    assert [i["closed_at"] for i in check(T0 + timedelta(minutes=2))] == [
-        T0 + timedelta(minutes=2)]
+                        " AND source = 'zendesk'", (T0, TALLY))
+    drain(world.db, T0)  # the day's sweep runs here; later hours run only sla_check
+    assert stale() == []  # 24 h by default
+    zendesk_hours(0.5)
+    for at in (T0 + timedelta(hours=1), T0 + timedelta(hours=1, minutes=30)):
+        drain(world.db, at)  # two checks see it, one incident
+    incidents = stale()
+    assert [(i["opened_at"], i["closed_at"]) for i in incidents] == [
+        (T0 + timedelta(hours=1), None)]
+    assert incidents[0]["details"] == {"last_available_at": T0.isoformat(),
+                                       "expected_by": (T0 + timedelta(minutes=30)).isoformat()}
+    zendesk_hours(24)
+    drain(world.db, T0 + timedelta(hours=2))
+    assert [i["closed_at"] for i in stale()] == [T0 + timedelta(hours=2)]
 
 
 @pytest.mark.parametrize(("last", "now", "stale"), [
@@ -339,7 +345,7 @@ def test_stale_source_opens_one_incident(world):
 def test_product_is_stale_after_the_monthly_batch_grace(last, now, stale):
     def at(s):
         return datetime.fromisoformat(s).replace(tzinfo=UTC)
-    assert handlers.is_stale("product", at(last), at(now)) is stale
+    assert handlers.is_stale("product", at(last), at(now), {}) is stale
 
 
 def test_feed_triggers_commit_with_their_batch(world, small_world_dir, monkeypatch):
@@ -425,3 +431,82 @@ def test_stale_model_still_runs_the_rules(world, monkeypatch):
     by_sweep = [c for c in cases if c["opened_by"] == f"bootstrap:sweep:{MONDAY.date()}"]
     assert len(by_sweep) == 12
     assert rows(world.owner, "SELECT * FROM worklists") == []
+
+
+def test_tick_claims_jobs_due_at_its_now(empty, monkeypatch):
+    """One time source: a tick at a `now` ahead of the clock claims and finishes jobs due at
+    that now."""
+    monkeypatch.setitem(handlers.HANDLERS, "noop", lambda db, job: None)
+    later = T0 + timedelta(hours=1)
+    with empty.db.system_tx() as conn:
+        job_id = jobs.enqueue(conn, "noop", None, {}, run_at=later)
+    assert worker.tick(empty.db, "w1", later) == 1
+    job = empty.owner.execute("SELECT status, finished_at FROM jobs WHERE id = %s",
+                              (job_id,)).fetchone()
+    assert (job["status"], job["finished_at"]) == ("done", later)
+
+
+def test_run_forever_survives_a_database_error(monkeypatch):
+    import psycopg
+    stop, calls = threading.Event(), []
+
+    def tick(db, worker_id, now):
+        calls.append(now)
+        if len(calls) == 1:
+            raise psycopg.OperationalError("server closed the connection unexpectedly")
+        stop.set()
+        return 0
+    monkeypatch.setattr(worker, "tick", tick)
+    worker.run_forever(None, "w1", stop, idle_sleep=0.01)
+    assert len(calls) == 2
+
+
+def test_second_bootstrap_sweep_applies_the_breaker(world):
+    """The bootstrap bypass happens once per tenant: a later {'bootstrap': true} sweep finds
+    the bootstrap_backlog audit row and opens past the breaker as held."""
+    bootstrap_sweep(world.db, T0)
+    drain(world.db, T0)
+    world.owner.execute("UPDATE cases SET status = 'done', closed_at = %s WHERE tenant_id = %s",
+                        (T0, TALLY))
+    again = T0 + timedelta(minutes=1)
+    with world.db.system_tx() as conn:
+        jobs.enqueue(conn, "daily_sweep", TALLY, {"bootstrap": True}, lane=1, run_at=again)
+    drain(world.db, again)
+    second = [c for c in must_act(world.owner) if c["opened_at"] == again]
+    assert sorted(c["status"] for c in second) == ["held"] * 2 + ["open"] * 10
+    assert not any(c["opened_by"].startswith("bootstrap:") for c in second)
+    audit = rows(world.owner, "SELECT * FROM audit_log WHERE tenant_id = %s"
+                 " AND action = 'bootstrap_backlog'", TALLY)
+    assert len(audit) == 1
+
+
+def test_monday_sweep_retried_after_midnight_still_freezes_monday(world):
+    """The freeze keys off the sweep's scheduled local date: Monday's sweep, first run after
+    local midnight on Tuesday, still freezes Monday's week."""
+    bootstrap_sweep(world.db, T0)
+    drain(world.db, T0)
+    worker.schedule(world.db, MONDAY)  # Monday's sweep is due; the worker is down until...
+    tuesday = datetime(2026, 10, 27, 0, 30, tzinfo=UTC)  # 00:30 Tuesday in London
+    drain(world.db, tuesday)
+    sweeps = rows(world.owner, "SELECT status FROM jobs WHERE kind = 'daily_sweep'")
+    assert [s["status"] for s in sweeps] == ["done", "done"]
+    weeks = {w["week_start"] for w in rows(world.owner, "SELECT week_start FROM worklists")}
+    assert weeks == {MONDAY.date()}
+
+
+def test_unowned_overdue_case_goes_to_the_admin_digest(world):
+    bootstrap_sweep(world.db, T0)
+    drain(world.db, T0)
+    case = must_act(world.owner)[0]
+    world.owner.execute("UPDATE cases SET owner_user_id = NULL, sla_due_at = %s"
+                        " WHERE tenant_id = %s AND id = %s",
+                        (MONDAY - timedelta(hours=1), TALLY, case["id"]))
+    drain(world.db, MONDAY)
+    name = world.owner.execute("SELECT name FROM accounts WHERE tenant_id = %s AND id = %s",
+                               (TALLY, case["account_id"])).fetchone()["name"]
+    admin = world.owner.execute("SELECT id FROM users WHERE tenant_id = %s"
+                                " AND role = 'admin'", (TALLY,)).fetchone()["id"]
+    digests = {d["to_user_id"]: d["body"] for d in rows(
+        world.owner, "SELECT * FROM outbox WHERE kind = 'manager_digest'")}
+    assert name in digests[admin].split("Past due")[1]
+    assert all(name not in b.split("Past due")[1] for u, b in digests.items() if u != admin)

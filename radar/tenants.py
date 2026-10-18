@@ -111,5 +111,9 @@ def runtime_config(slug: str) -> dict:
         "llm": {"enabled": True, "daily_token_budget": 200000},
         "breaker": {"min": 10, "multiple": 3.0},
         "model": {"min_decisions": 100},
+        # Ruling AH: hours since the latest delivery before a source counts as stale (product
+        # is the monthly batch rule in radar/agent/handlers.py). Production would set
+        # per-source expectations from each source's observed volume instead.
+        "freshness_hours": {"stripe": 24, "zendesk": 24, "gmail": 24, "salesforce": 26},
         "config_version": 1,
     }

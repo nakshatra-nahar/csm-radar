@@ -106,8 +106,9 @@ METRICS = [
        " >= 0.10 or a must-act fires (radar/policy.py, Task 7)"),
     _m("circuit_breaker", "New must-acts in 24 h above max(10, 3 x trailing 28-day daily"
        " median) open as held with one incident (radar/policy.py, Task 7)"),
-    _m("source_freshness", "Stripe, Zendesk, Gmail 1 h; Salesforce 26 h; product the monthly"
-       " batch due on the 3rd + 3 days (radar/agent/handlers.py, Task 9)"),
+    _m("source_freshness", "Tenant config freshness_hours (Stripe, Zendesk, Gmail 24 h;"
+       " Salesforce 26 h); product the monthly batch due on the 3rd + 3 days; checked hourly"
+       " (radar/agent/handlers.py, Task 9, Ruling AH)"),
     _m("rules_score", "2*integration_broken + 1.5*(open_urgent_tickets>0) +"
        " 1*(support_friction_90d>0) + 1*(days_since_customer_email>=60) + 1.5*(usage_drop>0.3)"
        " + 1*(seat_change_180d<-0.1) + 1*not_live_after_30d; a missing feature counts as no"

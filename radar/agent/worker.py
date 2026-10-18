@@ -4,10 +4,13 @@ tick() is one pass. run_for() repeats it within a time budget (the Vercel tick e
 Ruling Y); run_forever() is the long-lived worker process.
 """
 
+import logging
 import threading
 import time
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
+
+import psycopg
 
 from radar import clock
 from radar.agent import jobs
@@ -16,6 +19,8 @@ from radar.db import Database
 
 MAX_JOBS_PER_TICK = 20
 SCORE_RUN_TIMEOUT = timedelta(minutes=30)
+MAX_BACKOFF_S = 60.0
+log = logging.getLogger(__name__)
 
 
 def reap(db: Database, now: datetime) -> None:
@@ -44,22 +49,27 @@ def schedule(db: Database, now: datetime) -> None:
                 if jobs.once_per_period(conn, t["id"], kind, period):
                     jobs.enqueue(conn, kind, t["id"], {}, dedupe_key=kind, lane=0, run_at=now)
             local = now.astimezone(ZoneInfo(t["config"]["timezone"]))
+            period = local.date().isoformat()
             if (local.hour >= t["config"]["sweep_hour_local"]
-                    and jobs.once_per_period(conn, t["id"], "daily_sweep",
-                                             local.date().isoformat())):
-                jobs.enqueue(conn, "daily_sweep", t["id"], {}, dedupe_key="daily_sweep",
-                             lane=1, run_at=now)
+                    and jobs.once_per_period(conn, t["id"], "daily_sweep", period)):
+                jobs.enqueue(conn, "daily_sweep", t["id"], {"period": period},
+                             dedupe_key="daily_sweep", lane=1, run_at=now)
 
 
 def tick(db: Database, worker_id: str, now: datetime) -> int:
     """Reap, schedule what is due at `now`, then claim and run up to MAX_JOBS_PER_TICK jobs
     one at a time (so jobs they enqueue run in this tick too, live lane first). Returns how
-    many ran. Claims and finishes read the clock, so a lease starts when its job does."""
+    many ran. One time source: claims and finishes use `now` plus the clock's progress since
+    the tick began, so a lease still starts when its job does."""
+    skew = now - clock.now()
+
+    def at() -> datetime:
+        return clock.now() + skew
     reap(db, now)
     schedule(db, now)
     for ran in range(MAX_JOBS_PER_TICK):
         with db.system_tx() as conn:
-            claimed = jobs.claim(conn, worker_id, n=1, now=clock.now())
+            claimed = jobs.claim(conn, worker_id, n=1, now=at())
         if not claimed:
             return ran
         job = claimed[0]
@@ -67,10 +77,10 @@ def tick(db: Database, worker_id: str, now: datetime) -> int:
             HANDLERS[job.kind](db, job)
         except Exception as e:  # any failure: retry with backoff, dead after max attempts
             with db.system_tx() as conn:
-                jobs.fail(conn, job, f"{type(e).__name__}: {e}", now=clock.now())
+                jobs.fail(conn, job, f"{type(e).__name__}: {e}", now=at())
         else:
             with db.system_tx() as conn:
-                jobs.complete(conn, job, now=clock.now())
+                jobs.complete(conn, job, now=at())
     return MAX_JOBS_PER_TICK
 
 
@@ -88,6 +98,17 @@ def run_for(db: Database, worker_id: str, budget_s: float) -> dict:
 
 def run_forever(db: Database, worker_id: str, stop: threading.Event,
                 idle_sleep: float = 1.0) -> None:
+    """Tick until stopped. A transient database error (lost connection, pool timeout) is
+    logged and retried after a capped exponential backoff instead of ending the worker."""
+    failures = 0
     while not stop.is_set():
-        if tick(db, worker_id, clock.now()) == 0:
+        try:
+            ran = tick(db, worker_id, clock.now())
+        except psycopg.OperationalError:
+            failures += 1
+            log.exception("tick failed (%d in a row); backing off", failures)
+            stop.wait(min(MAX_BACKOFF_S, idle_sleep * 2**failures))
+            continue
+        failures = 0
+        if ran == 0:
             stop.wait(idle_sleep)
