@@ -91,15 +91,3 @@ class AnthropicClient:
 
 def _ms(start: float) -> int:
     return round((time.monotonic() - start) * 1000)
-
-
-class FakeClient:
-    """Replays canned results in order and records each call (tests)."""
-
-    def __init__(self, responses: list[LLMResult]) -> None:
-        self.responses, self.calls = list(responses), []
-
-    def complete(self, system: str, pack_json: str, instruction: str,
-                 schema: dict) -> LLMResult:
-        self.calls.append({"system": system, "pack_json": pack_json, "instruction": instruction})
-        return self.responses.pop(0)

@@ -109,8 +109,3 @@ def resolver(links: pd.DataFrame, T: datetime | None) -> tuple[pd.Series, pd.Ser
     for _ in range(3):  # a master merged again later; chains are rare and short
         target = target.map(master).fillna(target)
     return target, master
-
-
-def attribute(df: pd.DataFrame, links: pd.DataFrame, T: datetime | None) -> pd.Series:
-    """account_id per row, from the links usable at T."""
-    return df["account_ref"].map(resolver(links, T)[0])

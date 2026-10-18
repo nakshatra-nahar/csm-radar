@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from radar import asof, clock, registry, scoring
 from radar.agent import brief, evidence, template, validate
 from radar.agent.evidence import build_pack
-from radar.agent.llm import FakeClient, LLMResult, cost_usd
+from radar.agent.llm import LLMResult, cost_usd
 from radar.asof import load_frames
 from radar.db import owner_connect
 from radar.sim import INJECTION_ACCOUNT_NAME
@@ -32,6 +32,18 @@ def pack_of(worker_db, w, case=None):
 def result(output, stop_reason="end_turn", error=None):
     text = output if isinstance(output, str) or output is None else json.dumps(output)
     return LLMResult(text, stop_reason, USAGE, "claude-haiku-5-5", "req_1", 120, error)
+
+
+class FakeClient:
+    """Replays canned results in order and records each call."""
+
+    def __init__(self, responses: list[LLMResult]) -> None:
+        self.responses, self.calls = list(responses), []
+
+    def complete(self, system: str, pack_json: str, instruction: str,
+                 schema: dict) -> LLMResult:
+        self.calls.append({"system": system, "pack_json": pack_json, "instruction": instruction})
+        return self.responses.pop(0)
 
 
 @pytest.fixture

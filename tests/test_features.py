@@ -452,5 +452,5 @@ def test_asof_helpers_visible_latest_attribute():
     tickets = f.events[f.events["type"] == "support.ticket"]
     assert len(asof.visible(tickets, T)) == 2 and len(asof.visible(tickets, T, True)) == 3
     assert list(asof.latest(tickets, T)["status"]) == ["open"]
-    assert set(asof.attribute(tickets, f.links, T)) == {master}
-    assert set(asof.attribute(tickets, f.links, T - 6 * DAY)) == {loser}
+    assert set(tickets["account_ref"].map(asof.resolver(f.links, T)[0])) == {master}
+    assert set(tickets["account_ref"].map(asof.resolver(f.links, T - 6 * DAY)[0])) == {loser}

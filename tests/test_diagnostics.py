@@ -5,10 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radar import diagnostics, model
+from radar import diagnostics, evaluate, model
 from radar.asof import load_frames
 from radar.bootstrap import replay_feed, seed_tenants_and_users
 from radar.db import Database
+from radar.labels import build_training_set, training_grid
 from radar.registry import FEATURE_NAMES, FEATURES
 from radar.sim import generate
 from radar.sim.params import HISTORY_END
@@ -16,6 +17,12 @@ from radar.tenants import tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 
 SIGN_TENANTS = ["hearthline", "tallyworks"]
+
+
+def training_set(frames, tenant) -> pd.DataFrame:
+    """The served model's training population (bootstrap.train_and_promote) at history end."""
+    return build_training_set(frames, tenant, training_grid(tenant["slug"], HISTORY_END),
+                              HISTORY_END)
 
 
 @pytest.fixture(scope="module")
@@ -70,10 +77,16 @@ def test_oracle_auc_reads_latent_health_before_T():
 
 
 @pytest.fixture(scope="module")
-def signs_world(tmp_path_factory):
-    """A scale-0.3 world for the two model tenants: {slug: (frames, tenant row)}."""
+def signs_dir(tmp_path_factory):
     out = tmp_path_factory.mktemp("signs_world")
     generate(out, scale=0.3, tenants=SIGN_TENANTS)
+    return out
+
+
+@pytest.fixture(scope="module")
+def signs_world(signs_dir):
+    """A scale-0.3 world for the two model tenants: {slug: (frames, tenant row)}."""
+    out = signs_dir
     loaded = {}
     with fresh_database() as dsn:
         db = Database(_role_dsn(dsn, "radar_worker", WORKER_PASSWORD))
@@ -95,7 +108,17 @@ def signs_world(tmp_path_factory):
 def test_signs_hold_on_small_world(signs_world, slug):
     """Regression guard for Task 5b's calibration: every behavioural coefficient keeps the
     sign of its risk_direction (the design §6 promotion gate)."""
-    report = diagnostics.feature_report(*signs_world[slug])
+    report = diagnostics.feature_table(training_set(*signs_world[slug]))
     behavioural = [d.name for d in FEATURES if d.kind == "behavioural"]
     assert report.loc[behavioural, "sign_ok"].tolist() == [True] * len(behavioural), (
         report[["single_auc", "coef", "sign_ok"]].to_string())
+
+
+@pytest.mark.slow
+def test_oracle_auc_in_band(signs_world, signs_dir):
+    """Design §3.6 on the oracle the model card reports (diagnostics.oracle_auc): it sees the
+    latent health, so it must be good but not perfect."""
+    frames, tenant = signs_world["hearthline"]
+    weekly = evaluate.load_truth(signs_dir, "hearthline")["weekly"]
+    auc = diagnostics.oracle_auc(training_set(frames, tenant), frames.accounts, weekly)
+    assert 0.80 <= auc <= 0.92

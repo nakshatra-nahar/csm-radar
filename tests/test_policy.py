@@ -10,7 +10,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from radar import policy, scoring
-from radar.asof import attribute, load_frames
+from radar.asof import load_frames, resolver
 from radar.features import rule_facts, watermarks
 from radar.sim.params import PARAMS
 from radar.tenants import runtime_config, tenant_id
@@ -448,9 +448,9 @@ def test_outage_week_replay_caps_new_cases_per_csm(small_world_db):
     tickets = frames.events[frames.events["type"] == "support.ticket"]
     tagged = tickets[tickets["tags"].map(lambda t: f"outage-{outage.date()}" in (t or []))]
     stalled_at = outage + timedelta(days=3, hours=11)
+    owners = tagged["account_ref"].map(resolver(frames.links, stalled_at)[0])
     storm = {a: policy.RuleHit("urgent_ticket_stalled", a, [int(i)], "support_escalation", 2)
-             for a, i in zip(attribute(tagged, frames.links, stalled_at), tagged["id"],
-                             strict=True) if isinstance(a, UUID)}
+             for a, i in zip(owners, tagged["id"], strict=True) if isinstance(a, UUID)}
     days = [outage + timedelta(days=d, hours=11) for d in range(-28, 14)]
     hits = {T: policy.rule_hits(rule_facts(frames, tenant, T), cfg) for T in days}
     hits[stalled_at] += list(storm.values())

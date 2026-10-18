@@ -30,7 +30,6 @@ def test_rules_score_matches_the_registered_formula():
         "not_live_after_30d": [1.0, np.nan, 0.0]})
     # every signal fires on row 0; missing values (no telemetry, no Gmail) count as no signal
     assert rules_score(df).tolist() == [9.0, 0.0, 0.0]
-    assert evaluate.rules_score is rules_score
 
 
 def test_topk_by_book_respects_k_and_owner():

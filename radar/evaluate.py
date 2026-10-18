@@ -29,7 +29,7 @@ from radar.registry import FEATURE_NAMES, FEATURES, rules_score
 from radar.sim.params import HISTORY_END, PARAMS
 from radar.tenants import tenant_id
 
-__all__ = ["rules_score", "topk_by_book", "slot_floor", "naive_frames", "current_state", "run",
+__all__ = ["topk_by_book", "slot_floor", "naive_frames", "current_state", "run",
            "acceptance", "render_model_card"]
 
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]

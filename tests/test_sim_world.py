@@ -3,8 +3,6 @@ from datetime import UTC, date, datetime, timedelta
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
 
 from radar.sim import INJECTION_ACCOUNT_NAME, VP_CASE_NAMES, simulate, staff
 from radar.sim.params import HISTORY_END, PARAMS
@@ -141,43 +139,6 @@ def test_telemetry_coverage_and_outage_week(worlds, slug):
     assert in_week > 3 * around / 8
     tagged = [t for t in world.tickets if "outage-2025-11-10" in t.versions[0].tags]
     assert len(tagged) > 0.2 * len(world.telemetry_linked)
-
-
-def _oracle_snapshots(world):
-    """Eligible weekly snapshots (design §5.2: month-to-month or term end <= 150 days away),
-    excluding visible decisions and windows that hold an involuntary churn."""
-    w = world.weekly.sort_values(["sf_account_id", "week_start"]).copy()
-    g = w.groupby("sf_account_id")["h"]
-    w["h_mean8"] = g.transform(lambda s: s.rolling(8, min_periods=1).mean())
-    w["h_slope8"] = g.transform(lambda s: s.diff(8)) / 8
-    t = world.truth.set_index("sf_account_id")
-    accounts = {a.sf_account_id: a for a in world.accounts}
-    rows = []
-    for r in w.dropna().itertuples():
-        a, day = accounts[r.sf_account_id], r.week_start
-        if not date(2024, 1, 1) <= day <= (HISTORY_END - timedelta(days=90)).date():
-            continue
-        decision = t.at[r.sf_account_id, "decision_at"]
-        if pd.notna(decision) and decision.date() <= day:
-            continue
-        term_end = a.next_term_end(day)
-        if term_end is not None and (term_end - day).days > 150:
-            continue
-        soon = pd.notna(decision) and decision.date() <= day + timedelta(days=90)
-        if soon and t.at[r.sf_account_id, "involuntary"]:
-            continue
-        label = soon
-        rows.append((r.h, r.h_mean8, r.h_slope8,
-                     term_end is not None and (term_end - day).days <= 60,
-                     term_end is None, label))
-    return np.array(rows, dtype=float)
-
-
-def test_oracle_auc_in_band():
-    snaps = _oracle_snapshots(simulate("hearthline", scale=0.3))
-    x, y = snaps[:, :-1], snaps[:, -1]
-    p = LogisticRegression(max_iter=1000).fit(x, y).predict_proba(x)[:, 1]
-    assert 0.80 <= roc_auc_score(y, p) <= 0.92
 
 
 def test_full_scale_volume_estimate():

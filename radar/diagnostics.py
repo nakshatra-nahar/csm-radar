@@ -10,18 +10,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from radar import model, registry
-from radar.asof import Frames
-from radar.labels import build_training_set, training_grid
-from radar.sim.params import HISTORY_END
 
 COLUMNS = ["prevalence_nonzero", "missing_share", "single_auc", "coef", "sign_ok"]
-
-
-def training_set(frames: Frames, tenant: dict) -> pd.DataFrame:
-    """Monday snapshots from 120 days after the last source connected until the last settled
-    window before history_end (the Task 5 training population)."""
-    return build_training_set(frames, tenant, training_grid(tenant["slug"], HISTORY_END),
-                              HISTORY_END)
 
 
 def _auc(y: pd.Series, x: pd.Series, direction: int | None) -> float:
@@ -79,14 +69,3 @@ def oracle_auc(train: pd.DataFrame, accounts: pd.DataFrame, weekly: pd.DataFrame
     y = train["label"].loc[X.index]
     lr = make_pipeline(StandardScaler(), LogisticRegression()).fit(X, y)
     return roc_auc_score(y, lr.predict_proba(X)[:, 1])
-
-
-def feature_report(frames: Frames, tenant: dict, truth_world=None) -> pd.DataFrame:
-    """feature_table on the tenant's training set; with the simulator's World, an oracle row
-    too. Task 6 reads the §3.6 bands from the single_auc column."""
-    train = training_set(frames, tenant)
-    report = feature_table(train)
-    if truth_world is not None:
-        report.loc["oracle", "single_auc"] = oracle_auc(train, frames.accounts,
-                                                        truth_world.weekly)
-    return report

@@ -368,7 +368,7 @@ up, and churn decisions are drawn from it, so signals come before outcomes becau
 process ([design 3.2](docs/design.md#32-world-model-strictly-forward-weekly)). About 11 to 18%
 of voluntary churn is drawn independently of health, so no model can catch it. The world is
 hard on purpose: a test keeps the oracle's AUC between 0.80 and 0.92 and no single feature
-above 0.72 (`tests/test_sim_world.py::test_oracle_auc_in_band`).
+above 0.72 (`tests/test_diagnostics.py::test_oracle_auc_in_band`).
 
 **The feed ends on 2027-04-30** (`sim_end`). History up to 2026-10-17 is replayed at
 bootstrap; the rest is delivered by the agent as its time comes, so a reviewer sees new data
