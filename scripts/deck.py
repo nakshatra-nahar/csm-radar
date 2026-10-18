@@ -201,8 +201,8 @@ def s2(prs):
     text(s, x, Inches(1.6), Inches(5.8), Inches(0.5),
          [body("What I think the real problem is", 14, MUTED, True)])
     text(s, x, Inches(2.05), Inches(5.8), Inches(4.6), [
-        lead("A capacity problem. ", "A CSM owns about 120 accounts and has room for about ten "
-             "proactive calls a week."),
+        lead("A capacity problem. ", "A CSM owns about 110 accounts (measured) and has room "
+             "for about ten proactive calls a week."),
         lead("A ranking problem. ", "CSMs need to know who to call this week and why, with "
              "evidence they can trust. Thirty red accounts is still a guess about who comes "
              "first."),
@@ -260,7 +260,8 @@ def s4(prs):
         body("Each list is a prefix of its book's ranking. The floor can shorten a list but "
              "never reorders it or swaps in a smaller account.", 15),
         body("The cost: it catches more churned ARR but flags fewer small churners early. In "
-             "tallyworks, 70 of 174 decisions were flagged ahead, against 90 under a floor on p.",
+             "tallyworks (before the lead-time fix), 70 of 174 decisions were flagged ahead, "
+             "against 90 under a floor on p.",
              15),
         body("Small high-risk accounts still reach the CSM through the must-act rules and the "
              "Book page.", 15)])
@@ -290,7 +291,7 @@ def s6(prs):
     s = slide(prs, "Does it work? More churned ARR on the lists",
               "Recall at K is the share of the ARR that went on to churn that was on a CSM's top "
               "ten that week, from a point-in-time backtest with rolling origins. The model beats "
-              "the rules by about eight and nine points, and both intervals stay above zero. "
+              "the rules by about eight and ten points, and both intervals stay above zero. "
               "Renewal-date sort does worse than random in hearthline, where its interval sits "
               "below random's, and no better than random in tallyworks, where the intervals "
               "overlap: accounts close to renewal have mostly already announced their decision "
@@ -303,10 +304,10 @@ def s6(prs):
              "(1,000 resamples). Kitewire, onboarded this year, has no model yet.", 12, MUTED)])
     x = LEFT + Inches(7.7)
     text(s, x, Inches(1.45), Inches(4.4), Inches(5.6), [
-        lead("hearthline: ", "model 61.4% (52.9 to 68.0), rules 53.5%, renewal sort 14.7%. "
-             "Model minus rules +7.9 points (+2.9 to +12.9).", 14),
-        lead("tallyworks: ", "model 59.1% (49.3 to 67.0), rules 49.7%, renewal sort 18.4%. "
-             "Model minus rules +9.4 points (+2.0 to +17.3).", 14),
+        lead("hearthline: ", "model 61.6% (53.1 to 68.1), rules 53.5%, renewal sort 14.7%. "
+             "Model minus rules +8.1 points (+3.2 to +13.1).", 14),
+        lead("tallyworks: ", "model 59.6% (49.8 to 67.9), rules 49.7%, renewal sort 18.4%. "
+             "Model minus rules +9.8 points (+2.1 to +18.2).", 14),
         lead("Renewal sort does worse than random in hearthline and no better than random in "
              "tallyworks, ", "because accounts close to renewal have mostly announced their "
              "decision already and left the list.", 14),

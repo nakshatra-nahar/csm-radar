@@ -195,7 +195,7 @@ Every test named here runs in CI (`uv run pytest -q`) against a real PostgreSQL 
 | **We generate the data**: ~5,000 accounts, ~200k records, five sources | `radar/sim/` | 5,000 accounts and 232,305 history records at seed 7 ([measurements](docs/measurements.md#full-world-per-tenant)); `tests/test_sim_feed.py::test_full_scale_volume`, `tests/test_sim_world.py::test_full_scale_volume_estimate` |
 | **Messy and out of order** | `radar/sim/delivery.py`, `radar/ingest/` | `tests/test_sim_feed.py::test_messiness_is_planted`; `tests/test_ingest.py::test_shuffled_duplicated_replay_is_identical`; `tests/test_ingest.py::test_out_of_order_subscription_terminal_state_wins`; `tests/test_identity.py::test_late_salesforce_account_resolves_quarantined_ticket` |
 | **A model fitted on the data ranks accounts**, not an LLM | `radar/model.py`, `radar/scoring.py` | `tests/test_model.py::test_json_predict_matches_sklearn`; `tests/test_evaluate.py::test_model_beats_random_and_signs_pass`; [model card](docs/model-card-hearthline.md) |
-| No feature reads the future | `radar/asof.py`, `radar/features.py` | `tests/test_point_in_time.py::test_as_of_invariance`; `tests/test_point_in_time.py::test_truncation_equivalence`; the naive current-state row in each model card (AUC 0.984 vs 0.768) |
+| No feature reads the future | `radar/asof.py`, `radar/features.py` | `tests/test_point_in_time.py::test_as_of_invariance`; `tests/test_point_in_time.py::test_truncation_equivalence`; the naive current-state row in each model card (AUC 0.981 vs 0.767) |
 | **It runs without a human** | `radar/agent/worker.py`, `.github/workflows/tick.yml` | `tests/test_worker.py::test_feed_tick_delivers_and_triggers_rule_case_and_brief`; `tests/test_worker.py::test_sweep_runs_once_per_period`; `tests/test_worker.py::test_monday_sweep_freezes_worklists_and_digests`; a 7-day soak (`scripts/soak.py`): 2,938 jobs, 0 dead ([measurements](docs/measurements.md#unattended-soak)); `/ops` agent activity |
 | **Multiple customer organisations**, isolated by the database | `radar/migrations/`, `radar/db.py` | `tests/test_isolation.py::test_every_tenant_table_has_forced_rls_and_policy`; `tests/test_isolation.py::test_tenant_a_cannot_read_tenant_b`; `tests/test_isolation.py::test_cross_tenant_fk_rejected`; `tests/test_isolation.py::test_pooled_connection_reuse_does_not_leak`; `tests/test_isolation.py::test_web_and_worker_refuse_a_neon_style_owner`; `tests/test_web.py::test_idor_other_tenant_account_is_404` |
 | **Traceable**: what a CSM sees goes back to what was computed | `radar/scoring.py`, account page trace panel | `tests/test_scoring.py::test_score_run_persists_traceable_rows`; `tests/test_scoring.py::test_stored_contributions_sum_to_logit`; `tests/test_scoring.py::test_recompute_check_matches`; `tests/test_web.py::test_account_trace_shows_run_model_watermarks_and_recompute_ok`; `tests/test_web.py::test_timeline_greys_late_records_and_badges_heuristic_matches` |
@@ -245,12 +245,12 @@ config (`has_model=False`) and runs on the rules heuristic. Full detail:
 | renewal-date sort | 14.7% (10.7 to 18.7) | 18.4% (15.0 to 21.7) |
 | ARR sort | 42.1% (32.6 to 50.9) | 50.7% (38.1 to 60.5) |
 | rules heuristic | 53.5% (44.9 to 61.0) | 49.7% (39.8 to 56.9) |
-| **model** | **61.4% (52.9 to 68.0)** | **59.1% (49.3 to 67.0)** |
-| oracle (sees latent health; not deployable) | 77.6% (71.1 to 82.8) | 67.8% (59.0 to 74.2) |
+| **model** | **61.6% (53.1 to 68.1)** | **59.6% (49.8 to 67.9)** |
+| oracle (sees latent health; not deployable) | 77.7% (71.2 to 82.9) | 67.9% (59.3 to 74.3) |
 
-- Model minus renewal-date sort: +46.7 points (+37.0 to +55.2) for hearthline, +40.7
-  (+30.2 to +48.8) for tallyworks. Model minus rules: +7.9 (+2.9 to +12.9) and +9.4
-  (+2.0 to +17.3).
+- Model minus renewal-date sort: +46.8 points (+37.2 to +55.3) for hearthline, +41.1
+  (+30.5 to +49.5) for tallyworks. Model minus rules: +8.1 (+3.2 to +13.1) and +9.8
+  (+2.1 to +18.2).
 - **Why sorting by renewal date does no better than random.** It is worse than random for
   hearthline (14.7%, CI 10.7 to 18.7, against 26.1%) and no better for tallyworks (18.4%,
   CI 15.0 to 21.7, against 19.5%). Contract accounts decide 30 to 75 days before the term
@@ -258,19 +258,20 @@ config (`has_model=False`) and runs on the rules heuristic. Full detail:
   decision is visible, so it leaves the scored population (live, it becomes a must-act
   case). The accounts left near renewal are mostly renewers.
 - **Leakage check.** The same model on today's Salesforce row in every snapshot (a naive
-  current-state build) reaches AUC 0.984 for hearthline against 0.768 point in time. The gap
+  current-state build) reaches AUC 0.981 for hearthline against 0.767 point in time. The gap
   is what the as-of rule prevents. Unforecastable causes (acquired, business closed, ...)
-  sit near random, as they should: pooled, 16% against 25% random for hearthline and 16%
+  sit near random, as they should: pooled, 14% against 25% random for hearthline and 16%
   against 20% for tallyworks. Single causes have 3 to 8 decisions and are noisy.
 - **The VP's two lost renewals** (planted in hearthline): the model had Crestline Realty
   Group in its CSM's top 10 from 12 weeks before the decision, against 2 weeks under
   renewal-date sort; Bayside Home Partners 11 weeks against 1.
-- **Lead time.** Hearthline: 127 of 190 decisions flagged (on the list two weeks running)
-  before the decision, median 12.1 weeks. Tallyworks: 70 of 174, median 11.8 weeks.
+- **Lead time.** Hearthline: 124 of 190 decisions flagged (on the list two weeks running,
+  within the decision's 90-day window), median 11.4 weeks ahead. Tallyworks: 65 of 174,
+  median 11.2 weeks.
 - **The cost of ranking by ARR at risk.** Ranking by p x ARR catches more churned ARR but
-  flags fewer small churners early. Under the earlier floor on p alone, tallyworks flagged 90
-  of 174 decisions ahead; under the floor on the ranking key, 70 of 174, while recall@K went
-  from 42.6% to 59.1%. Small high-risk accounts are still covered by the must-act rules and
+  flags fewer small churners early. Measured before the label-window and settled-label
+  fixes, tallyworks flagged 90 of 174 decisions ahead under the earlier floor on p alone and
+  70 of 174 under the floor on the ranking key, while recall@K went from 42.6% to 59.1%. Small high-risk accounts are still covered by the must-act rules and
   show on the Book page.
 
 ## What we skipped, and what comes next
@@ -469,9 +470,12 @@ no organisation; Radar does not guess a match for either.
   AUC 0.55), and some seat-cut risk shows up as a usage drop.
 - **Ranking by ARR at risk flags fewer small churners early.** They are covered by must-act
   rules and the Book page, not by model slots.
-- **Calibration is imperfect.** Hearthline's model card shows ECE 0.024 for
-  yearly-billed rows across the backtest, above the 0.02 line at which training adds a Platt
-  step (training checks only the latest 8 matured weeks).
+- **Calibration is borderline.** Scored as training deploys it (Platt step included), every
+  billing segment in the backtest sits just under ECE 0.02 (hearthline 0.020 yearly and
+  monthly; tallyworks 0.020 and 0.017). Platt is fitted and judged on the same latest 8
+  matured weeks. The measured database's tallyworks model was trained before Platt had to
+  lower the worst segment's error: it carries a pair the current check rejects (yearly ECE
+  0.030 to 0.037 on its slice), so a fresh bootstrap deploys it without one.
 - **LLM briefs were not exercised at scale**: the API key used for the measurements had no
   credit, so every measured brief is a template. The LLM path is covered by tests with a fake
   client and one opt-in live test (`-m live_llm`).

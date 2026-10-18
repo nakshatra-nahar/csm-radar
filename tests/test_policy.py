@@ -288,8 +288,8 @@ def test_mid_week_must_act_upgrades_its_model_slot_in_place(owner_conn, worker_d
     assert [(i["account_id"], i["kind"]) for i in before] == [(first, "model")]
     (case,) = open_cases(worker_db, tid, [hit(first, "cancel_announced")], TUESDAY)
     after = items(owner_conn, tid, csm, NOW.date())
-    assert len(after) == 1 and {k: after[0][k] for k in ("account_id", "position", "kind", "reason", "case_id",
-                                     "new_since_monday", "p")} == {
+    keys = ("account_id", "position", "kind", "reason", "case_id", "new_since_monday", "p")
+    assert len(after) == 1 and {k: after[0][k] for k in keys} == {
         "account_id": first, "position": 1, "kind": "must_act", "reason": "cancel_announced",
         "case_id": case, "new_since_monday": True, "p": 0.6}
 

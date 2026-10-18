@@ -120,8 +120,8 @@ build was run are left out.
   label); the CSM's own outbound email recency (the model would learn our own policy); owner
   changes; anything from an LLM.
 - **Alternatives.** Use them and rely on regularisation.
-- **Why.** The naive current-state build in each model card shows what they buy: AUC 0.984
-  against 0.768 for hearthline, all of it leakage.
+- **Why.** The naive current-state build in each model card shows what they buy: AUC 0.981
+  against 0.767 for hearthline, all of it leakage.
 - **Cost if wrong.** A small amount of real signal is left on the table.
 - **Code.** `radar/registry.py`; `tests/test_features.py::test_banned_inputs_not_in_features`.
 
@@ -175,9 +175,9 @@ build was run are left out.
 - **Alternatives.** Gradient boosting with SHAP; a pooled model across tenants; a pickle.
 - **Why.** At this size LR is stable, its contributions are exact (no approximation to
   defend), the JSON diffs in review and loads without executing code. Gradient boosting
-  stays as a diagnostic row: it scored below LR here (49.8% against 61.4% recall@K for
+  stays as a diagnostic row: it scored below LR here (48.8% against 61.6% recall@K for
   hearthline).
-- **Cost if wrong.** Interactions are missed. The oracle's 77.6% shows the room left, most of
+- **Cost if wrong.** Interactions are missed. The oracle's 77.7% shows the room left, most of
   it from data the model cannot see.
 - **Code.** `radar/model.py`; `tests/test_model.py::test_json_predict_matches_sklearn`;
   `tests/test_model.py::test_contributions_sum_to_logit`.
@@ -269,9 +269,10 @@ build was run are left out.
   risk; re-rank daily.
 - **Why.** p x ARR is the expected loss a touch can address. A floor on the key itself can
   only shorten a list, never reorder it or swap in a smaller account.
-- **Cost if wrong.** ARR-weighted lists flag fewer small churners early: tallyworks flagged
-  70 of 174 decisions ahead under the key floor against 90 under the floor on p, while
-  recall@K rose from 42.6% to 59.1%. Small high-risk accounts are still covered by must-act
+- **Cost if wrong.** ARR-weighted lists flag fewer small churners early: measured before the
+  label-window and settled-label fixes, tallyworks flagged 70 of 174 decisions ahead under
+  the key floor against 90 under the floor on p, while recall@K rose from 42.6% to 59.1%
+  (now 65 of 174 and 59.6%). Small high-risk accounts are still covered by must-act
   rules and the Book page.
 - **Code.** `radar/policy.py` (`freeze_worklists`, `slot_key`, `slot_floor`);
   `tests/test_evaluate.py::test_floored_top_k_is_a_prefix_of_the_ranking`;

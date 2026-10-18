@@ -127,20 +127,20 @@ averaged over test weeks. The 95% intervals are a paired cluster bootstrap over 
 | renewal-date sort | 14.7% | 10.7 to 18.7 | 18.4% | 15.0 to 21.7 |
 | ARR sort | 42.1% | 32.6 to 50.9 | 50.7% | 38.1 to 60.5 |
 | rules heuristic | 53.5% | 44.9 to 61.0 | 49.7% | 39.8 to 56.9 |
-| **model** | **61.4%** | **52.9 to 68.0** | **59.1%** | **49.3 to 67.0** |
-| oracle (latent state) | 77.6% | 71.1 to 82.8 | 67.8% | 59.0 to 74.2 |
-| GBM (diagnostic) | 49.8% | 42.1 to 57.2 | 41.4% | 33.6 to 48.4 |
+| **model** | **61.6%** | **53.1 to 68.1** | **59.6%** | **49.8 to 67.9** |
+| oracle (latent state) | 77.7% | 71.2 to 82.9 | 67.9% | 59.3 to 74.3 |
+| GBM (diagnostic) | 48.8% | 41.6 to 56.1 | 38.1% | 29.7 to 46.3 |
 
 | | hearthline | tallyworks |
 |---|---|---|
-| model minus renewal sort | +46.7 points (+37.0 to +55.2) | +40.7 points (+30.2 to +48.8) |
-| model minus rules | +7.9 points (+2.9 to +12.9) | +9.4 points (+2.0 to +17.3) |
-| model precision@K | 19.1% | 13.7% |
-| model ROC-AUC (point in time) | 0.768 | 0.671 |
-| hindsight ROC-AUC | 0.769 | 0.672 |
-| naive current-state ROC-AUC (leakage row) | 0.984 | 0.969 |
-| lead time: decisions flagged | 127 of 190 | 70 of 174 |
-| lead time: median weeks | 12.1 | 11.8 |
+| model minus renewal sort | +46.8 points (+37.2 to +55.3) | +41.1 points (+30.5 to +49.5) |
+| model minus rules | +8.1 points (+3.2 to +13.1) | +9.8 points (+2.1 to +18.2) |
+| model precision@K | 19.7% | 13.9% |
+| model ROC-AUC (point in time) | 0.767 | 0.665 |
+| hindsight ROC-AUC | 0.768 | 0.666 |
+| naive current-state ROC-AUC (leakage row) | 0.981 | 0.968 |
+| lead time: decisions flagged (within the 90-day window) | 124 of 190 | 65 of 174 |
+| lead time: median weeks | 11.4 | 11.2 |
 | unforecastable share of voluntary churn | 17.7% | 10.8% |
 
 `acceptance()` passes for both tenants. Oracle AUC is 0.848 (hearthline) and 0.843
@@ -148,7 +148,9 @@ averaged over test weeks. The 95% intervals are a paired cluster bootstrap over 
 
 Lead time under the earlier floor on p (Ruling AP, superseded by the key floor of Ruling AZ):
 tallyworks flagged **90 of 174** churn decisions ahead (median 10.8 weeks), against 70 of 174
-under the key floor. Source: `eval/tallyworks.json` `lead_time` at commit f517b6c, read with
+under the key floor, both counted before the lead-time fix (any earlier flag counted, not
+only flags inside the decision's 90-day window) and before training waited for settled
+labels. Source: `eval/tallyworks.json` `lead_time` at commit f517b6c, read with
 `git show f517b6c:eval/tallyworks.json`. The key floor lists large accounts over small high-p
 ones, so it flags fewer, larger decisions; recall@K, which is ARR-weighted, went up (42.6% to
 59.1%).
