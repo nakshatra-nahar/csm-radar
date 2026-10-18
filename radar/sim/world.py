@@ -47,6 +47,10 @@ from radar.sim.params import PARAMS
 from radar.sim.signals import emails, product_events, usage
 from radar.tenants import TENANTS, TenantSpec
 
+# hearthline's names run out near 24,000; at 1x (2,600 of them) 100 collisions in a row has
+# odds below 1e-97, so the fallback never fires there and 1x worlds are unchanged
+NAME_TRIES = 100
+
 
 @dataclass
 class World:
@@ -119,15 +123,18 @@ def staff(slug: str, seed: int = 7) -> list[dict]:
 
 def _company_name(slug: str, rng: np.random.Generator, taken: set[str]) -> str:
     noun = NOUNS[slug]
-    while True:
+    for _ in range(NAME_TRIES):
         a, b = LAST[rng.integers(len(LAST))], LAST[rng.integers(len(LAST))]
         place = PLACES[rng.integers(len(PLACES))]
         n = noun[rng.integers(len(noun))]
         name = [f"{a} {n}", f"{place} {n}", f"{a} & {b} {n}", f"{place} {a} {n}"][
             rng.integers(4)]
         if name not in taken:
-            taken.add(name)
-            return name
+            break
+    else:  # the space is (nearly) used up, as at 10x: a number keeps the name unique
+        name = f"{name} {len(taken)}"
+    taken.add(name)
+    return name
 
 
 def _pick(table: list[tuple], seats: int):

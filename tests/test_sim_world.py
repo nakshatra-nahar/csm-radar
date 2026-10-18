@@ -9,6 +9,7 @@ from sklearn.metrics import roc_auc_score
 from radar.sim import INJECTION_ACCOUNT_NAME, VP_CASE_NAMES, simulate, staff
 from radar.sim.params import PARAMS
 from radar.sim.truth import write_truth
+from radar.sim.world import _company_name
 from radar.tenants import TENANTS
 
 INJECTION = (
@@ -245,3 +246,10 @@ def test_bug_episode_is_reported_the_week_it_starts(worlds):
               and not world.truth.effective_at.iloc[s.account] <= w0 + timedelta(weeks=s.week + 1)]
     assert len(starts) > 20
     assert sum(start in created for start in starts) >= 0.95 * len(starts)
+
+
+def test_company_names_run_past_the_name_space():
+    """A 10x hearthline needs 26,000 names; its surname x noun x place space holds fewer."""
+    rng, taken = np.random.default_rng(0), set()
+    names = [_company_name("hearthline", rng, taken) for _ in range(26_000)]
+    assert len(set(names)) == 26_000
