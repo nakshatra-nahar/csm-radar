@@ -236,6 +236,60 @@ def test_held_must_act_account_takes_no_model_slot(owner_conn, worker_db, book):
         ("model", other)]
 
 
+TUESDAY = NOW + timedelta(days=1)
+
+
+def test_mid_week_must_act_appends_new_since_monday(owner_conn, worker_db, book):
+    """Ruling BH: a must-act opened mid-week joins the owner's frozen list at the end, marked
+    new since Monday; the Monday rows are untouched; past K it counts as overflow."""
+    tid, csm, make_accounts = book
+    monday_act, model_acct, tuesday, wednesday = make_accounts(4)
+    open_cases(worker_db, tid, [hit(monday_act)], NOW)
+    run = make_run(owner_conn, tid, csm, NOW, [{"account": monday_act},
+                                               {"account": model_acct, "rank": 1, "p": 0.5}])
+    freeze(worker_db, tid, run, NOW, CFG | {"capacity_per_csm": 2})
+    before = items(owner_conn, tid, csm, NOW.date())
+    assert [i["kind"] for i in before] == ["must_act", "model"]
+    cfg = CFG | {"capacity_per_csm": 2}
+    (case,) = open_cases(worker_db, tid, [hit(tuesday, "cancel_announced")], TUESDAY, cfg)
+    open_cases(worker_db, tid, [hit(wednesday, "dunning_exhausted")], TUESDAY, cfg)
+    after = items(owner_conn, tid, csm, NOW.date())
+    assert after[:2] == before
+    assert [(i["account_id"], i["position"], i["kind"], i["reason"], i["new_since_monday"])
+            for i in after[2:]] == [
+        (tuesday, 3, "must_act", "cancel_announced", True),
+        (wednesday, 4, "must_act", "overflow:dunning_exhausted", True)]
+    assert after[2]["case_id"] == case and after[2]["added_at"] == TUESDAY
+
+
+def test_second_mid_week_case_or_listed_must_act_appends_nothing(owner_conn, worker_db, book):
+    tid, csm, make_accounts = book
+    listed, fresh = make_accounts(2)
+    open_cases(worker_db, tid, [hit(listed)], NOW)
+    freeze(worker_db, tid, make_run(owner_conn, tid, csm, NOW, [{"account": listed}]), NOW)
+    open_cases(worker_db, tid, [hit(fresh)], TUESDAY)
+    before = items(owner_conn, tid, csm, NOW.date())
+    assert [i["account_id"] for i in before] == [listed, fresh]
+    # a second rule on the appended account, and a new rule on the Monday must-act
+    new = open_cases(worker_db, tid, [hit(fresh, "cancel_announced"),
+                                      hit(listed, "cancel_announced")], TUESDAY)
+    assert len(new) == 2 and items(owner_conn, tid, csm, NOW.date()) == before
+
+
+def test_must_act_before_mondays_freeze_waits_for_the_freeze(owner_conn, worker_db, book):
+    """No list frozen for the current week: nothing is appended (not even to last week's
+    list); Monday's freeze lists the case as an ordinary must-act."""
+    tid, csm, make_accounts = book
+    old, account = make_accounts(2)
+    last = NOW - WEEK
+    freeze(worker_db, tid, make_run(owner_conn, tid, csm, last, [{"account": old}]), last)
+    open_cases(worker_db, tid, [hit(account)], NOW)
+    assert items(owner_conn, tid, csm, last.date()) == []
+    freeze(worker_db, tid, make_run(owner_conn, tid, csm, NOW, [{"account": account}]), NOW)
+    assert [(i["account_id"], i["new_since_monday"])
+            for i in items(owner_conn, tid, csm, NOW.date())] == [(account, False)]
+
+
 def test_a_low_risk_book_gets_fewer_model_slots(owner_conn, worker_db, book):
     """Ruling AZ: capacity is a cap. A model slot needs a ranking key (p * arr) at least
     min_slot_lift x the tenant's mean key over eligible accounts, so a book whose keys sit

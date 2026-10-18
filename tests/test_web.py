@@ -215,6 +215,38 @@ def test_week_shows_frozen_list_with_reasons_and_draft_status(web):
     assert all(i["reason"].replace("_", " ") in page for i in must)
 
 
+def test_week_shows_new_since_monday_must_act_after_mondays(web):
+    """Ruling BH: a cancellation announced on Tuesday is on My week, chipped, after the
+    Monday must-acts and before the check-ins and model slots."""
+    account = one(web, "SELECT a.id, a.name FROM accounts a WHERE a.owner_user_id = %s"
+                  " AND a.merged_into IS NULL AND NOT a.is_test AND NOT EXISTS (SELECT 1"
+                  " FROM worklist_items i JOIN worklists w ON w.id = i.worklist_id"
+                  " WHERE w.user_id = %s AND i.account_id = a.id) AND NOT EXISTS (SELECT 1"
+                  " FROM cases c WHERE c.account_id = a.id AND c.status IN ('open', 'held'))"
+                  " ORDER BY a.name LIMIT 1", web.csm, web.csm)
+    cfg = one(web, "SELECT config FROM tenants WHERE id = %s", HEARTH)["config"]
+    with web.db.tenant_tx(HEARTH, actor="agent") as conn:
+        (case,) = policy.open_cases(conn, HEARTH, [policy.RuleHit(
+            "cancel_announced", account["id"], [], "save_call", 1)], "test",
+            MONDAY + timedelta(days=1), cfg)
+    try:
+        page = client_as(web, web.csm).get("/week").text
+        row = page.split(f'/accounts/{account["id"]}"', 1)[1].split("</tr>", 1)[0]
+        assert "new since Monday" in row
+        mondays = web.owner.execute(
+            "SELECT a.id, i.kind FROM worklist_items i JOIN worklists w ON w.id = i.worklist_id"
+            " JOIN accounts a ON a.id = i.account_id WHERE w.user_id = %s"
+            " AND NOT i.new_since_monday", (web.csm,)).fetchall()
+        at = page.index(f'/accounts/{account["id"]}"')
+        assert all(page.index(f'/accounts/{m["id"]}"') < at for m in mondays
+                   if m["kind"] == "must_act")
+        assert all(page.index(f'/accounts/{m["id"]}"') > at for m in mondays
+                   if m["kind"] != "must_act")
+    finally:
+        web.owner.execute("DELETE FROM worklist_items WHERE case_id = %s", (case,))
+        web.owner.execute("DELETE FROM cases WHERE id = %s", (case,))
+
+
 def test_account_trace_shows_run_model_watermarks_and_recompute_ok(web):
     account = own_account(web)
     c = client_as(web, web.csm)

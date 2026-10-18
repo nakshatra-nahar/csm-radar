@@ -134,11 +134,35 @@ def _breaker(conn, tenant_id, now: datetime, cfg: dict) -> tuple[int, float, flo
     return per_day.get(0, 0), median, max(b["min"], b["multiple"] * median)
 
 
+def _append_new_since_monday(conn, account_id, kind: str, case: UUID, now: datetime,
+                             cfg: dict) -> None:
+    """Ruling BH: a must-act opened after the owner's list froze this (tenant-local ISO) week
+    joins it at the end, marked new since Monday, overflow past K like the freeze. Nothing
+    is re-sorted or removed; an account already on the list (any kind) keeps its row, and
+    with no list yet Monday's freeze picks the case up."""
+    today = now.astimezone(ZoneInfo(cfg["timezone"])).date()
+    conn.execute(
+        "INSERT INTO worklist_items (worklist_id, account_id, position, kind, reason, p,"
+        " expected_arr_at_risk_minor, case_id, added_at, new_since_monday)"
+        " SELECT w.id, a.id,"
+        "  (SELECT coalesce(max(position), 0) + 1 FROM worklist_items WHERE worklist_id = w.id),"
+        "  'must_act', CASE WHEN (SELECT count(*) FROM worklist_items WHERE worklist_id = w.id"
+        "  AND kind = 'must_act') >= %(k)s THEN 'overflow:' ELSE '' END || %(kind)s,"
+        "  s.p, s.expected_arr_at_risk_minor, %(case)s, %(now)s, true"
+        " FROM accounts a JOIN worklists w ON w.user_id = a.owner_user_id"
+        "  AND w.week_start = %(week)s"
+        " LEFT JOIN account_scores s ON s.run_id = w.run_id AND s.account_id = a.id"
+        " WHERE a.id = %(a)s ON CONFLICT (tenant_id, worklist_id, account_id) DO NOTHING",
+        {"k": cfg["capacity_per_csm"], "kind": kind, "case": case, "now": now,
+         "week": today - timedelta(days=today.weekday()), "a": account_id})
+
+
 def open_cases(conn, tenant_id, hits: list[RuleHit], run_or_event: str, now: datetime,
                cfg: dict, breaker: bool = True) -> list[UUID]:
     """Open a case per hit unless one is live (idempotent). Past the circuit breaker's
     threshold new cases open as held, with one circuit_breaker incident. A new must-act
-    lifts the account's suppressions. Returns the new case ids.
+    lifts the account's suppressions, and an open one joins the owner's list if this week's
+    is already frozen (Ruling BH). Callers hold the tenant lock. Returns the new case ids.
 
     breaker=False is the bootstrap backlog (Ruling AB): every case opens, marked
     'bootstrap:' so the breaker's later counts leave it out (it is not a storm)."""
@@ -154,6 +178,8 @@ def open_cases(conn, tenant_id, hits: list[RuleHit], run_or_event: str, now: dat
         new.append(case)
         recent += 1
         held += status == "held"
+        if status == "open":
+            _append_new_since_monday(conn, h.account_id, h.rule, case, now, cfg)
         conn.execute("UPDATE suppressions SET lifted_at = %s, lifted_reason = %s"
                      " WHERE account_id = %s AND lifted_at IS NULL",
                      (now, f"must_act:{h.rule}", h.account_id))

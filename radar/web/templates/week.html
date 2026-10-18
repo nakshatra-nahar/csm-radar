@@ -46,7 +46,7 @@
       <td class="nw">{{ r.term_end or '—' }}</td>
       <td>{{ band(r.band) }}</td>
       <td class="n">{{ num(r.lift, '{:.1f}×') }}</td>
-      <td>{% if r.weeks_listed <= 1 %}<span class="tag new">new</span>{% else %}week {{ r.weeks_listed }}{% endif %}</td>
+      <td>{% if r.new_since_monday %}<span class="tag new">new since Monday</span>{% elif r.weeks_listed <= 1 %}<span class="tag new">new</span>{% else %}week {{ r.weeks_listed }}{% endif %}</td>
       <td>
         {% if r.kind == "model" %}
           {{ r.why_now or 'top of your book' }}

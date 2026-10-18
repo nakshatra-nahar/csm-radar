@@ -201,7 +201,9 @@ def diff_runs(conn, account_id: UUID, run_id: UUID, prev_run_id: UUID | None = N
     least 6 days older), per feature in log-odds, largest change first. Exact for a logistic
     regression; an ineligible side has no contributions and counts as 0."""
     now = conn.execute(_ROW + "s.run_id = %s", (account_id, run_id)).fetchone()
-    if prev_run_id is not None:
+    if now is None:  # not scored by the run (a mid-week must-act on a new account)
+        prev = None
+    elif prev_run_id is not None:
         prev = conn.execute(_ROW + "s.run_id = %s", (account_id, prev_run_id)).fetchone()
     else:
         prev = conn.execute(_ROW + "r.status = 'done' AND r.as_of <= %s - interval '6 days'"
