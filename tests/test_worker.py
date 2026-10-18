@@ -570,3 +570,13 @@ def test_unowned_overdue_case_goes_to_the_admin_digest(world):
         world.owner, "SELECT * FROM outbox WHERE kind = 'manager_digest'")}
     assert name in digests[admin].split("Past due")[1]
     assert all(name not in b.split("Past due")[1] for u, b in digests.items() if u != admin)
+
+
+def test_run_for_stops_at_its_time_budget_with_work_left(monkeypatch):
+    """The Vercel tick stays inside the 300 s function limit: with a backlog (every tick runs
+    a job), run_for returns once budget_s of wall time has passed."""
+    ticks = iter(range(0, 10_000, 100))
+    monkeypatch.setattr(worker.time, "monotonic", lambda: next(ticks))  # +100 s per call
+    monkeypatch.setattr(worker, "tick", lambda db, worker_id, now: 1)
+    out = worker.run_for(None, "w", budget_s=240)
+    assert out["ticks"] == 3 and out["jobs"] == 3 and out["elapsed_s"] >= 240
