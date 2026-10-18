@@ -186,9 +186,11 @@ build was run are left out.
 
 - **Context.** Training on one customer's data to score another's is a data-use question for
   the contract, not an engineering default.
-- **Decision.** Each tenant gets its own model once it has at least 100 matured decisions.
-  Kitewire, onboarded in 2026, has none: its slots are ranked by `rules_score x ARR`, and
-  its pages say so.
+- **Decision.** Each tenant gets its own model. A tenant trains only if its spec sets
+  `has_model` (`radar/tenants.py`); the `min_decisions` gate (100 matured decisions,
+  `radar/bootstrap.py`) then applies. Kitewire, onboarded in 2026, is off by config
+  (`has_model=False`), so it has no model at any decision count: its slots are ranked by
+  `rules_score x ARR`, and its pages say so. Turning it on is a deliberate step.
 - **Alternatives.** One pooled model; transfer from the mature tenants.
 - **Why.** No cross-tenant data use, and the rules were measured on the mature tenants
   (53.5% and 49.7% recall@K).

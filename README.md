@@ -223,8 +223,8 @@ apart over the last 32 weeks with settled labels. Each origin refits on snapshot
 97 days older (the 90-day horizon plus 7 days of label latency) and scores the next 8 weeks.
 The headline is **recall@K**: the share of churned ARR that sat on each CSM's list of up to
 K = 10, computed weekly across every book and averaged over test weeks. Intervals are a
-paired cluster bootstrap over accounts (1,000 resamples). Kitewire has no model; it runs on
-the rules heuristic until it has enough decisions. Full detail:
+paired cluster bootstrap over accounts (1,000 resamples). Kitewire has no model; it is off by
+config (`has_model=False`) and runs on the rules heuristic. Full detail:
 [model card, hearthline](docs/model-card-hearthline.md) and
 [model card, tallyworks](docs/model-card-tallyworks.md); numbers from `eval/*.json` and
 [docs/measurements.md](docs/measurements.md#evaluation).
