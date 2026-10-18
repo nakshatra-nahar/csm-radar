@@ -1,0 +1,164 @@
+"""Every page read (design §9). Each function takes a connection from the user's tenant_tx, so
+RLS has already limited it to the session's tenant; callers apply rbac.authorize per account."""
+
+from datetime import date, timedelta
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from radar import clock, registry, scoring
+from radar.agent import brief
+from radar.agent.evidence import EXACT_METHODS, describe
+
+KINDS = {d.name: d.kind for d in registry.FEATURES}
+TIMELINE_ITEMS = 40
+
+
+def tenant(conn, tenant_id: UUID) -> dict:
+    return conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
+
+
+def active_model(conn) -> dict | None:
+    return conn.execute("SELECT id, version FROM models WHERE status = 'active'").fetchone()
+
+
+def week_start(tz: str) -> date:
+    """Monday of the current ISO week in the tenant's timezone."""
+    today = clock.now().astimezone(ZoneInfo(tz)).date()
+    return today - timedelta(days=today.weekday())
+
+
+def freshness(conn) -> list[dict]:
+    """Each source's latest delivery, stale while its source_stale incident is open."""
+    return conn.execute(
+        "SELECT s.source, s.last_deliver_at, i.id IS NOT NULL AS stale FROM source_status s"
+        " LEFT JOIN incidents i ON i.kind = 'source_stale' AND i.source = s.source"
+        " AND i.closed_at IS NULL ORDER BY s.source").fetchall()
+
+
+def worklist(conn, user_id: UUID, week: date) -> dict | None:
+    return conn.execute("SELECT * FROM worklists WHERE user_id = %s AND week_start = %s",
+                        (user_id, week)).fetchone()
+
+
+def worklist_rows(conn, wl: dict) -> list[dict]:
+    """The frozen items in list order, scored by the run the list was frozen from."""
+    rows = conn.execute(
+        "SELECT i.*, a.name, a.owner_user_id, s.arr_minor, s.band, s.lift,"
+        " (s.context->>'term_end')::date AS term_end, c.play, c.status AS case_status,"
+        " EXISTS (SELECT 1 FROM outbox o WHERE o.case_id = i.case_id"
+        "  AND o.kind = 'customer_email' AND o.status = 'draft') AS draft_ready,"
+        # shortcut: counts the weeks this user listed it, not consecutive weeks; count streaks
+        # if lists start skipping weeks
+        " (SELECT count(*) FROM worklist_items j JOIN worklists v ON v.id = j.worklist_id"
+        "  WHERE v.user_id = w.user_id AND v.week_start <= w.week_start"
+        "  AND j.account_id = i.account_id) AS weeks_listed,"
+        " (SELECT t.outcome || ' on ' || to_char(t.closed_at, 'YYYY-MM-DD') FROM cases t"
+        "  WHERE t.account_id = i.account_id AND t.outcome IS NOT NULL"
+        "  ORDER BY t.closed_at DESC LIMIT 1) AS last_touch"
+        " FROM worklist_items i JOIN worklists w ON w.id = i.worklist_id"
+        " JOIN accounts a ON a.id = i.account_id"
+        " LEFT JOIN account_scores s ON s.run_id = w.run_id AND s.account_id = i.account_id"
+        " LEFT JOIN cases c ON c.id = i.case_id WHERE i.worklist_id = %s ORDER BY i.position",
+        (wl["id"],)).fetchall()
+    for r in rows:
+        changed = scoring.diff_runs(conn, r["account_id"], wl["run_id"])["changed_features"]
+        r["top_change"] = changed[0] if changed else None
+    return rows
+
+
+def book(conn, band: str | None) -> list[dict]:
+    """Every live account with its latest score (None before the first sweep), riskiest ARR
+    first; behavioural chips are the features pushing its risk up."""
+    rows = conn.execute(
+        "SELECT a.id, a.name, a.owner_user_id, s.band, s.p, s.lift, s.arr_minor, s.coverage,"
+        " s.contributions FROM accounts a LEFT JOIN latest_scores s ON s.account_id = a.id"
+        " WHERE a.merged_into IS NULL AND NOT a.is_test"
+        " AND (%(band)s::text IS NULL OR s.band = %(band)s)"
+        " ORDER BY s.expected_arr_at_risk_minor DESC NULLS LAST, a.name",
+        {"band": band}).fetchall()
+    for r in rows:
+        up = [(c, f) for f, c in (r["contributions"] or {}).items()
+              if KINDS.get(f) == "behavioural" and c > 0]
+        r["chips"] = [f for _, f in sorted(up, reverse=True)[:3]]
+    return rows
+
+
+def account(conn, account_id: UUID) -> dict | None:
+    return conn.execute("SELECT a.*, u.name AS owner_name FROM accounts a LEFT JOIN users u"
+                        " ON u.id = a.owner_user_id WHERE a.id = %s", (account_id,)).fetchone()
+
+
+def score(conn, account_id: UUID) -> dict | None:
+    """The account's latest actionable score with its run's trace fields."""
+    return conn.execute(
+        "SELECT s.*, r.trigger, r.watermarks, r.crosswalk_watermark, r.manifest,"
+        " r.config_version, r.code_version, m.version AS model_version FROM latest_scores s"
+        " JOIN score_runs r ON r.tenant_id = s.tenant_id AND r.id = s.run_id"
+        " LEFT JOIN models m ON m.tenant_id = r.tenant_id AND m.id = r.model_id"
+        " WHERE s.account_id = %s", (account_id,)).fetchone()
+
+
+def why(contributions: dict | None) -> list[dict]:
+    """Contributions (log-odds) grouped by source, largest effect first; the structural terms
+    form one 'structure' group the page shows collapsed."""
+    groups: dict[str, list] = {}
+    for d in registry.FEATURES:
+        if contributions and d.name in contributions:
+            key = "structure" if d.kind == "structural" else d.source.split("+")[0]
+            groups.setdefault(key, []).append((d.name, contributions[d.name]))
+    out = [{"source": k, "total": sum(c for _, c in terms), "terms": terms}
+           for k, terms in groups.items()]
+    return sorted(out, key=lambda g: -abs(g["total"]))
+
+
+TIMELINE = """
+WITH refs AS (SELECT DISTINCT ON (account_ref) account_ref, account_id, method
+              FROM identity_links WHERE available_at <= %(now)s
+              ORDER BY account_ref, available_at DESC, id DESC)
+SELECT e.*, r.method FROM events e JOIN refs r ON r.account_ref = e.account_ref
+WHERE r.account_id = %(a)s AND e.available_at <= %(now)s AND e.occurred_at <= %(now)s
+ORDER BY e.occurred_at DESC, e.id DESC LIMIT %(n)s
+"""
+
+
+def timeline(conn, account_id: UUID, as_of, currency: str) -> list[dict]:
+    """The account's latest events through the identity links usable now. 'late' marks
+    records that arrived after the run's as_of (the run could not see them); 'exact' whether
+    an exact key, not a name or domain heuristic, matched the record."""
+    rows = conn.execute(TIMELINE, {"now": clock.now(), "a": account_id,
+                                   "n": TIMELINE_ITEMS}).fetchall()
+    return [{"at": e["occurred_at"], "source": e["source"], "method": e["method"],
+             "text": describe(e, currency, cap=None)[0], "exact": e["method"] in EXACT_METHODS,
+             "late": as_of is not None and e["available_at"] > as_of} for e in rows]
+
+
+def cases(conn, account_id: UUID, user_id: UUID) -> list[dict]:
+    """Open and held cases with their latest ready brief and customer draft (Ruling AJ: never
+    a digest); the draft's preview is filled as approving it now would send it."""
+    rows = conn.execute("SELECT * FROM cases WHERE account_id = %s AND status IN"
+                        " ('open', 'held') ORDER BY opened_at", (account_id,)).fetchall()
+    for c in rows:
+        c["brief"] = conn.execute(
+            "SELECT generator, output FROM briefs WHERE case_id = %s AND status = 'ready'"
+            " ORDER BY updated_at DESC LIMIT 1", (c["id"],)).fetchone()
+        c["draft"] = conn.execute(
+            "SELECT o.id, o.subject, o.body, t.email FROM outbox o LEFT JOIN contacts t"
+            " ON t.tenant_id = o.tenant_id AND t.id = o.to_contact_id WHERE o.case_id = %s"
+            " AND o.kind = 'customer_email' AND o.status = 'draft'"
+            " ORDER BY o.created_at DESC LIMIT 1", (c["id"],)).fetchone()
+        if c["draft"]:
+            c["draft"]["preview"] = brief.filled(conn, c["draft"]["id"], user_id)
+    return rows
+
+
+def case_of(conn, account_id: UUID, case_id: UUID) -> dict | None:
+    return conn.execute("SELECT * FROM cases WHERE id = %s AND account_id = %s",
+                        (case_id, account_id)).fetchone()
+
+
+def draft_of(conn, account_id: UUID, outbox_id: UUID) -> dict | None:
+    """A customer draft of one of the account's cases."""
+    return conn.execute(
+        "SELECT o.* FROM outbox o JOIN cases c ON c.tenant_id = o.tenant_id AND c.id = o.case_id"
+        " WHERE o.id = %s AND c.account_id = %s AND o.kind = 'customer_email'",
+        (outbox_id, account_id)).fetchone()

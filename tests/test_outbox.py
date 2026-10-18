@@ -96,3 +96,17 @@ def test_new_evidence_supersedes_the_case_draft(owner_conn, worker_db, brief_wor
     assert [d["id"] for d in drafts] == [new["id"]]
     with pytest.raises(ValueError, match="cancelled"):
         approve(worker_db, w, old["id"], w["csm"])
+
+
+def test_approval_fills_first_name_and_sender_name(owner_conn, worker_db, brief_world):
+    w = brief_world
+    draft = draft_of(owner_conn, brief.generate_brief(worker_db, w["tid"], w["case"], None))
+    assert "{first_name}" in draft["body"]
+    with worker_db.tenant_tx(w["tid"]) as conn:
+        preview = brief.filled(conn, draft["id"], w["csm"])
+    sender = owner_conn.execute("SELECT name FROM users WHERE id = %s",
+                                (w["csm"],)).fetchone()["name"]
+    assert preview["body"].startswith("Hi ana,") and preview["body"].endswith(sender)
+    approve(worker_db, w, draft["id"], w["csm"])
+    sent = owner_conn.execute("SELECT body FROM outbox WHERE id = %s", (draft["id"],)).fetchone()
+    assert sent["body"] == preview["body"]

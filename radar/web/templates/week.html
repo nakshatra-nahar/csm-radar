@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "macros.html" import band, money, num, day %}
+{% block title %}My week{% endblock %}
+{% block content %}
+<h1>My week <span class="sub">Week of {{ week }}</span></h1>
+
+<section class="fresh" aria-labelledby="fresh-h">
+  <h2 id="fresh-h">Data freshness</h2>
+  <ul>
+    {% for s in freshness %}
+    <li class="{{ 'stale' if s.stale else 'ok' }}">
+      <b>{{ s.source }}</b> {% if s.stale %}<strong>stale</strong>{% else %}fresh{% endif %},
+      last data {{ s.last_deliver_at.strftime('%Y-%m-%d %H:%M UTC') if s.last_deliver_at else 'never' }}
+    </li>
+    {% else %}
+    <li>No data has arrived yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% if not model %}<p class="note">No active model for {{ tenant.name }}: lists are ranked by rules only.</p>{% endif %}
+
+{% if not frozen_any %}
+<p class="empty">This week's list is not frozen yet. It freezes on Monday after the morning sweep.</p>
+{% elif not worklist %}
+<p class="empty">No list for you this week. Lists are frozen for CSMs who own accounts.</p>
+{% else %}
+{% for kind, title in [("must_act", "Must act"), ("check_in", "Check in"), ("model", "Model slots")] %}
+{% set items = rows|selectattr("kind", "equalto", kind)|list %}
+{% if items %}
+<section aria-labelledby="h-{{ kind }}">
+  <h2 id="h-{{ kind }}">{{ title }} <span class="count">{{ items|length }}</span></h2>
+  <div class="scroll">
+  <table class="list">
+    <thead><tr>
+      <th scope="col">Account</th><th scope="col" class="n">ARR</th><th scope="col">Renewal</th>
+      <th scope="col">Band</th><th scope="col" class="n">Lift</th><th scope="col">On list</th>
+      <th scope="col">Why now</th><th scope="col">Play</th><th scope="col">Draft</th>
+      <th scope="col">Last touch</th><th scope="col">Outcome</th>
+    </tr></thead>
+    <tbody>
+    {% for r in items %}
+    <tr>
+      <th scope="row"><a href="/accounts/{{ r.account_id }}">{{ r.name }}</a></th>
+      <td class="n">{{ money(r.arr_minor, tenant.currency) }}</td>
+      <td>{{ r.term_end or '—' }}</td>
+      <td>{{ band(r.band) }}</td>
+      <td class="n">{{ num(r.lift, '{:.1f}×') }}</td>
+      <td>{% if r.weeks_listed <= 1 %}<span class="tag new">new</span>{% else %}week {{ r.weeks_listed }}{% endif %}</td>
+      <td>
+        {% if r.kind == "model" %}
+          {% if r.top_change %}{{ r.top_change.name|replace('_', ' ') }} {{ 'up' if r.top_change.delta_contribution > 0 else 'down' }}{% else %}top of your book{% endif %}
+        {% else %}{{ r.reason|replace('_', ' ') }}{% endif %}
+      </td>
+      <td>{{ (r.play or '—')|replace('_', ' ') }}</td>
+      <td>{% if r.draft_ready %}<span class="tag ready">Draft ready</span>{% else %}—{% endif %}</td>
+      <td>{{ r.last_touch or '—' }}</td>
+      <td>
+        {% if r.case_id and r.case_status == "open" %}
+        <form class="oneclick" method="post" action="/accounts/{{ r.account_id }}/cases/{{ r.case_id }}/outcome">
+          {% for o in ("called", "emailed", "met") %}
+          <button type="submit" name="outcome" value="{{ o }}">{{ o|capitalize }}<span class="vh"> {{ r.name }}</span></button>
+          {% endfor %}
+        </form>
+        {% elif r.case_status %}{{ r.case_status|replace('_', ' ') }}{% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endblock %}

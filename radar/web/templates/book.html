@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "macros.html" import band as chip, money, num %}
+{% block title %}Book{% endblock %}
+{% block content %}
+<h1>Book <span class="sub">{{ rows|length }} accounts</span></h1>
+{% if not model %}<p class="note">No active model for {{ tenant.name }}: bands come from rules only.</p>{% endif %}
+<form class="filter" method="get" action="/book">
+  <label for="band">Band</label>
+  <select id="band" name="band">
+    <option value="">All bands</option>
+    {% for b in bands %}<option value="{{ b }}"{% if b == band %} selected{% endif %}>{{ b|replace('_', ' ') }}</option>{% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+{% if not rows %}
+<p class="empty">{% if band %}No accounts in this band.{% else %}You have no accounts.{% endif %}</p>
+{% else %}
+<div class="scroll">
+<table class="list">
+  <thead><tr>
+    <th scope="col">Account</th><th scope="col">Band</th><th scope="col" class="n">p</th>
+    <th scope="col" class="n">Lift</th><th scope="col" class="n">ARR</th>
+    <th scope="col">Coverage</th><th scope="col">Pushing risk up</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <th scope="row"><a href="/accounts/{{ r.id }}">{{ r.name }}</a></th>
+    <td>{{ chip(r.band) }}</td>
+    <td class="n">{{ num(r.p, '{:.3f}') }}</td>
+    <td class="n">{{ num(r.lift, '{:.1f}×') }}</td>
+    <td class="n">{{ money(r.arr_minor, tenant.currency) }}</td>
+    <td>{% if r.coverage is none %}—{% elif r.coverage.ok %}ok{% else %}<span class="tag gap">gap</span>{% endif %}{% if r.coverage and not r.coverage.telemetry %} <span class="tag">no telemetry</span>{% endif %}</td>
+    <td>{% for f in r.chips %}<span class="tag">{{ f|replace('_', ' ') }}</span> {% else %}—{% endfor %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

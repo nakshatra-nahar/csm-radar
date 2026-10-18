@@ -73,12 +73,13 @@ def _ticket(e: dict) -> str:
             f" {e['priority'] or 'unknown'})")
 
 
-def _render(e: dict, currency: str) -> tuple[str, str]:
-    """(display, trust) for one event; ticket text is the customer's and is never trusted."""
+def describe(e: dict, currency: str, cap: int | None = TEXT_CAP) -> tuple[str, str]:
+    """(display, trust) for one event; ticket text is the customer's and is never trusted.
+    cap=None keeps the whole (redacted) ticket text, for a person reading the timeline."""
     a, day = e["attrs"], e["occurred_at"].date().isoformat()
     if e["type"] == "support.ticket":
         text = redact(f"{a.get('subject', '')}: {a.get('description_excerpt', '')}")
-        return f"{_ticket(e)} on {day}: {text}"[:TEXT_CAP], "untrusted_customer_text"
+        return f"{_ticket(e)} on {day}: {text}"[:cap], "untrusted_customer_text"
     if e["type"] == "billing.invoice":
         return (f"Invoice {e['status']} on {day}: {_money(e['amount_minor'], currency)} due,"
                 f" payment attempt {a.get('attempt_count')}"), "system"
@@ -309,7 +310,7 @@ def build_pack(conn, tenant_id: UUID, case_id: UUID) -> EvidencePack:
     if case["kind"] == "model_topk" and score:
         shown = _feature_events(conn, case["account_id"], score, now) + shown
     for e, display in shown:
-        display, trust = (display, "system") if display else _render(e, currency)
+        display, trust = (display, "system") if display else describe(e, currency)
         # safe only if an exact key links the item to this case's own account right now
         safe = e["method"] in EXACT_METHODS and e["link_account"] == case["account_id"]
         items.append(EvidenceItem(f"E{len(items) + 1}", e["source"], e["type"].split(".")[1],

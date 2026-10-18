@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% from "macros.html" import band, money, num, day %}
+{% block title %}{{ account.name }}{% endblock %}
+{% block content %}
+<header class="acct">
+  <h1>{{ account.name }}</h1>
+  <dl class="facts">
+    <div><dt>Owner</dt><dd>{{ account.owner_name or 'no owner' }}</dd></div>
+    <div><dt>Segment</dt><dd>{{ account.segment or '—' }}</dd></div>
+    {% if score %}
+    <div><dt>Band</dt><dd>{{ band(score.band) }}</dd></div>
+    <div><dt>ARR</dt><dd>{{ money(score.arr_minor, currency) }}</dd></div>
+    <div><dt>Renewal</dt><dd>{{ (score.context.term_end or '—')[:10] }}</dd></div>
+    <div><dt>p</dt><dd>{{ num(score.p, '{:.3f}') }}</dd></div>
+    <div><dt>Lift</dt><dd>{{ num(score.lift, '{:.1f}×') }}</dd></div>
+    <div><dt>Rank in book</dt><dd>{{ score.rank_in_book or '—' }}</dd></div>
+    {% endif %}
+  </dl>
+</header>
+{% if not model %}<p class="note">No active model for {{ tenant.name }}: rules only.</p>{% endif %}
+{% if not score %}
+<p class="empty">Not scored yet. The next daily sweep scores this account.</p>
+{% else %}
+<div class="cols">
+<section aria-labelledby="changed-h">
+  <h2 id="changed-h">What changed since the last run</h2>
+  {% if not changes.prev_run_id %}
+  <p class="empty">No run a week or more earlier to compare with.</p>
+  {% else %}
+  <ul class="changes">
+    {% for c in changes.changed_features[:5] %}
+    <li><b>{{ c.name|replace('_', ' ') }}</b> {{ num(c.before) }} → {{ num(c.after) }}
+      <span class="delta {{ 'up' if c.delta_contribution > 0 else 'down' }}">{{ '{:+.2f}'.format(c.delta_contribution) }} log-odds</span></li>
+    {% else %}<li>Nothing changed.</li>{% endfor %}
+  </ul>
+  {% if changes.version_changes.model %}<p class="note">The model changed between the runs.</p>{% endif %}
+  {% endif %}
+</section>
+<section aria-labelledby="why-h">
+  <h2 id="why-h">Why</h2>
+  {% if not why %}
+  <p>Rules score: {{ num(score.rules_score, '{:.1f}') }} points.</p>
+  {% else %}
+  <ul class="why">
+    {% for g in why %}
+    {% if g.source == "structure" %}
+    <li><b>structure</b> ({{ g.terms|map('first')|join(', ') }}) <span class="n">{{ '{:+.2f}'.format(g.total) }}</span></li>
+    {% else %}
+    <li><b>{{ g.source }}</b> <span class="n">{{ '{:+.2f}'.format(g.total) }}</span>
+      <ul>{% for name, c in g.terms %}<li>{{ name|replace('_', ' ') }} <span class="n">{{ '{:+.2f}'.format(c) }}</span></li>{% endfor %}</ul></li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+  <p class="hint">Log-odds per source, so they add up to the score's logit.</p>
+  {% endif %}
+</section>
+</div>
+{% endif %}
+
+<section aria-labelledby="cases-h">
+  <h2 id="cases-h">Cases</h2>
+  {% for c in cases %}
+  <article class="case">
+    <h3>{{ c.kind|replace('_', ' ') }} <span class="tag">{{ c.status }}</span></h3>
+    <p class="meta">Play: {{ (c.play or '—')|replace('_', ' ') }} · opened {{ day(c.opened_at) }}{% if c.sla_due_at %} · due {{ day(c.sla_due_at) }}{% endif %}</p>
+    {% if c.brief %}
+    <h4>Brief <span class="hint">({{ c.brief.generator }})</span></h4>
+    <ul class="summary">{% for s in c.brief.output.summary %}<li>{{ s.text }} <span class="ids">{{ s.evidence_ids|join(', ') }}</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if c.draft %}
+    {% set d = c.draft %}
+    <h4>Draft to the customer{% if d.email %} <span class="hint">to {{ d.email }}</span>{% endif %}</h4>
+    <div class="preview">
+      <p class="hint">Preview, as approving it now would send it:</p>
+      <p><b>{{ d.preview.subject }}</b></p>
+      <pre>{{ d.preview.body }}</pre>
+    </div>
+    <details><summary>Edit draft</summary>
+      <form method="post" action="/accounts/{{ account.id }}/drafts/{{ d.id }}/edit" class="stack">
+        <label for="subject-{{ d.id }}">Subject</label>
+        <input id="subject-{{ d.id }}" name="subject" value="{{ d.subject }}" required maxlength="120">
+        <label for="body-{{ d.id }}">Body <span class="hint">{first_name} and {sender_name} are filled on approval</span></label>
+        <textarea id="body-{{ d.id }}" name="body" rows="9" required>{{ d.body }}</textarea>
+        <button type="submit">Save draft</button>
+      </form>
+    </details>
+    <form method="post" action="/accounts/{{ account.id }}/drafts/{{ d.id }}/approve">
+      <button type="submit" class="primary">Approve and send (dry run)</button>
+    </form>
+    {% endif %}
+    {% if c.status == "open" %}
+    <div class="actions">
+      <form method="post" action="/accounts/{{ account.id }}/cases/{{ c.id }}/outcome" class="row">
+        <label for="outcome-{{ c.id }}">Outcome</label>
+        <select id="outcome-{{ c.id }}" name="outcome" required>
+          {% for o in outcomes %}<option value="{{ o }}">{{ o|replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <label for="reason-{{ c.id }}">Note <span class="hint">(needed for no action)</span></label>
+        <input id="reason-{{ c.id }}" name="reason" maxlength="500">
+        <button type="submit">Log outcome</button>
+      </form>
+      <form method="post" action="/accounts/{{ account.id }}/cases/{{ c.id }}/dismiss" class="row">
+        <label for="dismiss-{{ c.id }}">Dismiss as</label>
+        <select id="dismiss-{{ c.id }}" name="reason" required>
+          {% for r in dismissals %}<option value="{{ r }}">{{ r|replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <button type="submit">Dismiss</button>
+      </form>
+    </div>
+    {% endif %}
+  </article>
+  {% else %}
+  <p class="empty">No open cases.</p>
+  {% endfor %}
+</section>
+
+<section aria-labelledby="timeline-h">
+  <h2 id="timeline-h">Evidence timeline</h2>
+  {% if score %}<p class="hint">Greyed rows arrived after this run's as-of time ({{ score.as_of.strftime('%Y-%m-%d %H:%M UTC') }}), so the score could not see them.</p>{% endif %}
+  <ol class="timeline">
+    {% for e in timeline %}
+    <li class="{{ 'late' if e.late }}">
+      <time datetime="{{ e.at.isoformat() }}">{{ day(e.at) }}</time>
+      <span class="src">{{ e.source }}</span>
+      <span class="text">{{ e.text }}</span>
+      {% if e.exact %}<span class="match exact">exact key: {{ e.method|replace('_', ' ') }}</span>
+      {% else %}<span class="match fuzzy">matched by name/domain</span>{% endif %}
+      {% if e.late %}<span class="tag">arrived after the run</span>{% endif %}
+    </li>
+    {% else %}
+    <li>No records linked to this account yet.</li>
+    {% endfor %}
+  </ol>
+</section>
+
+{% if score %}
+<section class="trace" aria-labelledby="trace-h">
+  <h2 id="trace-h">Trace</h2>
+  <dl class="facts">
+    <div><dt>Run</dt><dd><code>{{ score.run_id }}</code></dd></div>
+    <div><dt>Trigger</dt><dd>{{ score.trigger }}</dd></div>
+    <div><dt>As of</dt><dd>{{ score.as_of.strftime('%Y-%m-%d %H:%M UTC') }}</dd></div>
+    <div><dt>Model</dt><dd>{% if score.model_version %}Model v{{ score.model_version }}{% else %}none (rules only){% endif %}</dd></div>
+    <div><dt>Config</dt><dd>v{{ score.config_version }}</dd></div>
+    <div><dt>Code</dt><dd><code>{{ (score.code_version or '')[:12] }}</code></dd></div>
+    <div><dt>Crosswalk watermark</dt><dd>{{ score.crosswalk_watermark.strftime('%Y-%m-%d %H:%M UTC') if score.crosswalk_watermark else '—' }}</dd></div>
+  </dl>
+  <h3>Source watermarks</h3>
+  <ul class="inline">{% for source, mark in score.watermarks|dictsort %}<li><b>{{ source }}</b> {{ (mark or 'none')[:16] }}</li>{% endfor %}</ul>
+  <h3>Feature vector</h3>
+  <div class="scroll">
+  <table class="list">
+    <thead><tr><th scope="col">Feature</th><th scope="col" class="n">Value</th><th scope="col" class="n">Contribution</th><th scope="col">Code hash</th></tr></thead>
+    <tbody>
+    {% for f in features %}
+    <tr><th scope="row">{{ f }}</th>
+      <td class="n">{{ num(score.features[f], '{:.4f}') }}</td>
+      <td class="n">{{ num((score.contributions or {}).get(f), '{:+.4f}') }}</td>
+      <td><code>{{ (score.manifest.get(f) or '—')[:12] }}</code></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <form method="post" action="/accounts/{{ account.id }}/recompute">
+    <button type="submit">Recompute from raw</button>
+  </form>
+  {% if recompute %}
+  {% set ok = recompute.features_match and recompute.p_match %}
+  <p class="result {{ 'ok' if ok else 'bad' }}" role="status">Recompute from raw: {{ 'match' if ok else 'mismatch' }}</p>
+  {% if not ok %}
+  <ul>{% for name, d in recompute.diffs|dictsort %}<li>{{ name }}: stored {{ d.stored }}, recomputed {{ d.recomputed }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

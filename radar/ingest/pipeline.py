@@ -81,12 +81,14 @@ def _prepare(rec: dict, available_at: datetime | None) -> _Record:
 
 
 def ingest(conn, tenant_id, records: Iterable[dict],
-           available_at: datetime | None = None) -> IngestStats:
+           available_at: datetime | None = None, verified: bool = False) -> IngestStats:
     """available_at=None means each record's deliver_at (feed replay); the live webhook path
-    passes clock.now()."""
+    passes clock.now() and verified=True: it checked the signature over the raw request body
+    with the configured secrets, so the feed's re-check (canonical JSON, demo secret) is
+    skipped."""
     prepared = sorted((_prepare(r, available_at) for r in records),
                       key=lambda r: (r.at, r.source, r.srid, r.digest))
-    run = _Run(conn, tenant_id)
+    run = _Run(conn, tenant_id, verified)
     for rec, raw_id in run.land(prepared):
         run.apply(rec, raw_id)
     return run.finish()
@@ -110,8 +112,8 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 class _Run:
     """State for one ingest() call: counters, pending event rows and identity memo."""
 
-    def __init__(self, conn, tenant_id):
-        self.conn, self.tenant_id = conn, tenant_id
+    def __init__(self, conn, tenant_id, verified: bool):
+        self.conn, self.tenant_id, self.verified = conn, tenant_id, verified
         tenant = conn.execute("SELECT slug, internal_domain, config FROM tenants WHERE id = %s",
                               (tenant_id,)).fetchone()
         self.internal_domain = tenant["internal_domain"]
@@ -155,7 +157,7 @@ class _Run:
             self.bump(r.source, "received")
             self.last_at[r.source] = max(r.at, self.last_at.get(r.source, r.at))
             # before landing: a stale or forged copy must not claim the id the real one needs
-            if r.source == "stripe" and not self.signed(r):
+            if r.source == "stripe" and not self.verified and not self.signed(r):
                 self.quarantine(r, None, "bad_signature",
                                 details={"payload": r.body, "headers": r.headers})
                 continue

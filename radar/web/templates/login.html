@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<section class="login">
+  <h1>Radar</h1>
+  <p class="lede">Who to call this week, and why.</p>
+  {% if tenants %}
+  <form method="post" action="/login/user">
+    <label for="user">Log in as a demo user</label>
+    <select id="user" name="user" required>
+      {% for t in tenants %}
+      <optgroup label="{{ t.name }}">
+        {% for u in t.users %}
+        <option value="{{ t.id }}:{{ u.id }}">{{ u.name }} ({{ u.role }})</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+    <button type="submit">Log in</button>
+  </form>
+  {% else %}
+  <form method="post" action="/login">
+    <label for="passcode">Demo passcode</label>
+    <input id="passcode" name="passcode" type="password" autocomplete="current-password"
+           required{% if error %} aria-describedby="login-error" aria-invalid="true"{% endif %}>
+    {% if error %}<p class="error" id="login-error" role="alert">{{ error }}</p>{% endif %}
+    <button type="submit">Continue</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

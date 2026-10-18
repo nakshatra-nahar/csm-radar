@@ -1,0 +1,16 @@
+{# Band chips always carry their name: colour is never the only signal. #}
+{% macro band(b) -%}
+<span class="band band-{{ b or 'none' }}">{{ (b or 'not scored')|replace('_', ' ') }}</span>
+{%- endmacro %}
+
+{% macro money(minor, currency) -%}
+{% if minor is none %}—{% else %}{{ currency }} {{ '{:,.0f}'.format(minor / 100) }}{% endif %}
+{%- endmacro %}
+
+{% macro num(x, fmt='{:.2f}') -%}
+{% if x is none %}—{% else %}{{ fmt.format(x) }}{% endif %}
+{%- endmacro %}
+
+{% macro day(at) -%}
+{% if at is none %}—{% else %}{{ at.strftime('%Y-%m-%d') }}{% endif %}
+{%- endmacro %}

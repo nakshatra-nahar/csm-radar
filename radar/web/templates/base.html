@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Radar{% endblock %} · Radar</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="/week">Radar</a>
+  {% if user %}
+  {% set here = request.url.path %}
+  <nav aria-label="Main">
+    {% for href, label, roles in [("/week", "My week", "csm manager admin"),
+                                  ("/book", "Book", "csm manager admin"),
+                                  ("/team", "Team", "manager admin"),
+                                  ("/ops", "Ops", "admin"),
+                                  ("/model", "Model", "csm manager admin"),
+                                  ("/dictionary", "Dictionary", "csm manager admin")] %}
+    {% if user.role in roles.split() %}
+    <a href="{{ href }}"{% if here == href %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endif %}
+    {% endfor %}
+  </nav>
+  <form class="who" method="post" action="/logout">
+    <span>{{ user.name }} · {{ user.role }}{% if tenant %} · {{ tenant.name }}{% endif %}</span>
+    <button type="submit">Log out</button>
+  </form>
+  {% endif %}
+</header>
+<main id="main">
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

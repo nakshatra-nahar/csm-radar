@@ -20,6 +20,9 @@ class Settings:
     llm_model: str
     data_dir: Path
     webhook_secrets: dict[str, str]  # key id -> secret
+    tick_secret: str | None  # bearer for /internal/tick; None disables the endpoint
+    tick_budget_s: float
+    production: bool  # session cookie is https-only
 
 
 def _parse_secrets(raw: str) -> dict[str, str]:
@@ -48,4 +51,8 @@ def load_settings() -> Settings:
         llm_model=env("RADAR_LLM_MODEL", "claude-haiku-5-5"),
         data_dir=Path(env("RADAR_DATA_DIR", "data")),
         webhook_secrets=_parse_secrets(env("RADAR_WEBHOOK_SECRETS", "")),
+        # Vercel cron sends CRON_SECRET; deployments set both names to the same value
+        tick_secret=env("TICK_SECRET") or env("CRON_SECRET") or None,
+        tick_budget_s=float(env("TICK_BUDGET_S", "240")),
+        production=env("RADAR_ENV") == "production",
     )
