@@ -256,7 +256,8 @@ config (`has_model=False`) and runs on the rules heuristic. Full detail:
 - **Leakage check.** The same model on today's Salesforce row in every snapshot (a naive
   current-state build) reaches AUC 0.984 for hearthline against 0.768 point in time. The gap
   is what the as-of rule prevents. Unforecastable causes (acquired, business closed, ...)
-  sit at or below random in the by-cause table, as they should.
+  sit near random, as they should: pooled, 16% against 25% random for hearthline and 16%
+  against 20% for tallyworks. Single causes have 3 to 8 decisions and are noisy.
 - **The VP's two lost renewals** (planted in hearthline): the model had Crestline Realty
   Group in its CSM's top 10 from 12 weeks before the decision, against 2 weeks under
   renewal-date sort; Bayside Home Partners 11 weeks against 1.
