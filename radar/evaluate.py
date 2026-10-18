@@ -28,6 +28,7 @@ from radar.config import load_settings
 from radar.db import Database
 from radar.features import compute_features
 from radar.labels import MATURITY, churn_decisions, label_rows, snapshot_grid
+from radar.policy import rank_in_book
 from radar.registry import FEATURE_NAMES, FEATURES, rules_score
 from radar.sim.params import PARAMS
 from radar.tenants import TENANTS, tenant_id
@@ -49,17 +50,13 @@ def load_truth(data_dir: Path, slug: str) -> dict[str, pd.DataFrame]:
 
 
 def _rank(df: pd.DataFrame, key: pd.Series) -> pd.Series:
-    """0-based rank per (as_of, owner_user_id) book by key descending, ties by arr_minor;
-    a missing key ranks last."""
-    order = pd.DataFrame({"as_of": df["as_of"], "owner": df["owner_user_id"], "key": key,
-                          "arr": df["arr_minor"]}).sort_values(
-        ["key", "arr"], ascending=False, na_position="last", kind="stable")
-    return order.groupby(["as_of", "owner"], dropna=False).cumcount().reindex(df.index)
+    """1-based rank per (as_of, owner_user_id) book: the served worklist's rank_in_book."""
+    return rank_in_book(key, df["arr_minor"], df["as_of"], df["owner_user_id"])
 
 
 def topk_by_book(df: pd.DataFrame, score_col: str, k: int) -> pd.Series:
     """In each CSM's top K by expected ARR at risk (score * arr_minor), per as_of."""
-    return _rank(df, df[score_col] * df["arr_minor"]) < k
+    return _rank(df, df[score_col] * df["arr_minor"]) <= k
 
 
 def _weekly_mean(num: pd.Series, den: pd.Series, week: pd.Series) -> float:
@@ -157,8 +154,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     t["renewal"] = -(t["term_end"] - t["as_of"]).dt.days  # sooner term end first
     book = t.groupby(["as_of", "owner_user_id"], dropna=False)["account_id"].transform("size")
     t["w_random"] = np.minimum(1.0, k / book)
-    t["w_renewal_sort"] = _rank(t, t["renewal"]) < k
-    t["w_arr_sort"] = _rank(t, arr) < k
+    t["w_renewal_sort"] = _rank(t, t["renewal"]) <= k
+    t["w_arr_sort"] = _rank(t, arr) <= k
     scores = {"renewal_sort": t["renewal"], "arr_sort": arr}
     for p in ("rules", "model", "oracle", "gbm", *(f"without_{g}" for g in GROUPS),
               *(f"c_{c}" for c in C_GRID)):
@@ -337,8 +334,8 @@ def _vp_cases(feats: pd.DataFrame, artifacts: dict, accounts: pd.DataFrame, sf: 
                 artifact = artifacts[max([o for o in starts if o <= T], default=starts[0])]
                 p = pd.Series(model.predict(artifact, book)[0], index=book.index)
                 renewal = -(book["term_end"] - book["as_of"]).dt.days
-                week["renewal_sort"] = int(_rank(book, renewal)[mine].iloc[0]) + 1
-                week["model"] = int(_rank(book, p * book["arr_minor"])[mine].iloc[0]) + 1
+                week["renewal_sort"] = int(_rank(book, renewal)[mine].iloc[0])
+                week["model"] = int(_rank(book, p * book["arr_minor"])[mine].iloc[0])
                 owner = book.loc[mine, "owner_user_id"].iloc[0]
                 week["book_size"] = int((book["owner_user_id"] == owner).sum())
             weeks.append(week)

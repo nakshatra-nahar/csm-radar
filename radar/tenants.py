@@ -105,6 +105,7 @@ def runtime_config(slug: str) -> dict:
             "model_topk": 5,
         },
         "band_lift": {"red": 3.0, "yellow": 1.5},
+        "band_rules": {"red": 3.0, "yellow": 1.5},  # rules_score points, tenants without a model
         "eligibility_window_days": 150,
         "sf": {"csm_field": spec.csm_field},
         "llm": {"enabled": True, "daily_token_budget": 200000},

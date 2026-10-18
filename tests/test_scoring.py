@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from radar import model, registry, scoring
-from radar.bootstrap import backfill_runs
+from radar.bootstrap import backfill_runs, train_and_promote
 from radar.registry import FEATURE_NAMES
 from radar.tenants import tenant_id
 
@@ -148,3 +148,25 @@ def test_backfill_writes_one_non_actionable_run_per_monday(trained_world_db, own
         weeks=1) for i in range(3)]
     assert {(r["trigger"], r["actionable"], r["status"]) for r in runs} == {
         ("backfill", False, "done")}
+
+
+def test_wrong_sign_fit_is_rejected_not_promoted(trained_world_db, owner, monkeypatch):
+    fit = model.fit
+    flip = next(d for d in registry.FEATURES if d.kind == "behavioural")
+
+    def wrong_sign(train):  # every behavioural sign right except flip's
+        artifact = fit(train)
+        for d in registry.FEATURES:
+            if d.kind == "behavioural":
+                sign = -1 if d is flip else 1
+                artifact["coef"][artifact["features"].index(d.name)] = sign * d.risk_direction
+        return artifact
+
+    monkeypatch.setattr(model, "fit", wrong_sign)
+    active = trained_world_db["models"]["hearthline"]
+    assert train_and_promote(trained_world_db["db"], HEARTHLINE, AS_OF) is None
+    rows = owner.execute("SELECT id, status, metrics FROM models WHERE tenant_id = %s"
+                         " ORDER BY version DESC", (HEARTHLINE,)).fetchall()
+    assert rows[0]["status"] == "rejected"
+    assert rows[0]["metrics"]["wrong_signs"] == [flip.name]
+    assert [r["id"] for r in rows if r["status"] == "active"] == [active]

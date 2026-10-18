@@ -19,7 +19,8 @@ MUST_ACT = list(RULE_PLAYS)
 SOURCE_PLAYS = {"product": "value_review", "zendesk": "support_escalation",
                 "gmail": "exec_check_in", "billing": "value_review"}
 NO_SIGNAL_PLAY = "exec_check_in"
-# kitewire has no model: its band reads rules_score points on the same scale as lift
+# kitewire has no model: its band reads rules_score points; the default for a config that
+# predates band_rules
 RULES_BAND = {"red": 3.0, "yellow": 1.5}
 LIFT_P = 0.10  # a suppression ends when p rises this much (absolute) over p_at_dismiss
 CHECK_INS = 2
@@ -44,8 +45,18 @@ def band(p: float | None, lift: float | None, open_must_act: bool, coverage_ok: 
         return "unknown"
     if not eligible:
         return "not_in_window"
-    value, cut = (lift, cfg["band_lift"]) if p is not None else (rules_score, RULES_BAND)
+    value, cut = ((lift, cfg["band_lift"]) if p is not None
+                  else (rules_score, cfg.get("band_rules", RULES_BAND)))
     return "red" if value >= cut["red"] else "yellow" if value >= cut["yellow"] else "green"
+
+
+def rank_in_book(key: pd.Series, arr: pd.Series, *book: pd.Series) -> pd.Series:
+    """1-based rank within each book (rows sharing every `book` value) by key descending, ties
+    by arr descending, stable; a missing key ranks last. Served and evaluated ranks use this."""
+    frame = pd.DataFrame({"key": key, "arr": arr} | {f"b{i}": b for i, b in enumerate(book)})
+    order = frame.sort_values(["key", "arr"], ascending=False, na_position="last", kind="stable")
+    return order.groupby(list(frame.columns[2:]), dropna=False).cumcount().add(1).reindex(
+        frame.index)
 
 
 def choose_play(kind: str, contributions: dict[str, float]) -> str:
@@ -105,7 +116,7 @@ def _breaker(conn, tenant_id, now: datetime, cfg: dict) -> tuple[int, float, flo
     return per_day.get(0, 0), median, max(b["min"], b["multiple"] * median)
 
 
-def open_cases(conn, tenant_id, hits: list[RuleHit], opened_by: str, now: datetime,
+def open_cases(conn, tenant_id, hits: list[RuleHit], run_or_event: str, now: datetime,
                cfg: dict) -> list[UUID]:
     """Open a case per hit unless one is live (idempotent). Past the circuit breaker's
     threshold new cases open as held, with one circuit_breaker incident. A new must-act
@@ -114,7 +125,7 @@ def open_cases(conn, tenant_id, hits: list[RuleHit], opened_by: str, now: dateti
     new, held = [], 0
     for h in hits:
         status = "open" if recent < threshold else "held"
-        case = _insert_case(conn, h.account_id, h.rule, status, h.play, opened_by, now,
+        case = _insert_case(conn, h.account_id, h.rule, status, h.play, run_or_event, now,
                             h.sla_days, h.evidence_ids, cfg)
         if case is None:
             continue

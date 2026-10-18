@@ -36,6 +36,22 @@ def test_band_semantics_red_requires_lift3_or_must_act():
     assert band(p=None, lift=None, rules=1.0) == "green"
 
 
+def test_rules_band_thresholds_come_from_tenant_config():
+    assert runtime_config("kitewire")["band_rules"] == {"red": 3.0, "yellow": 1.5}
+    cfg = CFG | {"band_rules": {"red": 2.0, "yellow": 1.0}}
+    assert policy.band(None, None, False, True, True, 2.0, cfg) == "red"
+    assert policy.band(None, None, False, True, True, 1.0, cfg) == "yellow"
+
+
+def test_rank_in_book_per_book_ties_by_arr_missing_last():
+    key = pd.Series([5.0, 5.0, None, 1.0, 9.0])
+    arr = pd.Series([10, 20, 99, 1, 1])
+    owner = pd.Series(["a", "a", "a", "a", "b"])
+    assert policy.rank_in_book(key, arr, owner).tolist() == [2, 1, 4, 3, 1]
+    week = pd.Series([1, 1, 2, 2, 2])
+    assert policy.rank_in_book(key, arr, week, owner).tolist() == [2, 1, 2, 1, 1]
+
+
 def test_unknown_never_green():
     for lift in (0.0, 1.0, 1.6, 5.0):
         assert band(lift=lift, coverage=False) == "unknown"

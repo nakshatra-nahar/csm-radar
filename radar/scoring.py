@@ -67,9 +67,9 @@ def score_frame(frames: Frames, tenant: dict, as_of: datetime, artifact: dict | 
             index=df.index[eligible], dtype=object).reindex(df.index)
     df["lift"] = df["p"] / df.loc[eligible, "p"].mean()
     key = (df["p"] if artifact is not None else df["rules_score"]) * df["arr_minor"]
-    order = pd.DataFrame({"key": key, "arr": df["arr_minor"], "owner": df["owner_user_id"]})[
-        eligible & key.notna()].sort_values(["key", "arr"], ascending=False, kind="stable")
-    df["rank_in_book"] = order.groupby("owner", dropna=False).cumcount().add(1)
+    ranked = eligible & key.notna()  # only these get a rank; the rest stay NaN
+    df["rank_in_book"] = policy.rank_in_book(key[ranked], df.loc[ranked, "arr_minor"],
+                                             df.loc[ranked, "owner_user_id"])
     df["expected_arr_at_risk_minor"] = (df["p"] * df["arr_minor"]).round()
     df["band"] = [policy.band(_plain(r.p), _plain(r.lift), r.Index in must_act,
                               bool(r.coverage_ok), bool(r.eligible), r.rules_score,

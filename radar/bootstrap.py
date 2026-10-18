@@ -80,7 +80,8 @@ def _platt(artifact: dict, train: pd.DataFrame) -> tuple[dict | None, dict]:
 
 def train_and_promote(db: Database, tenant_id, as_of: datetime) -> UUID | None:
     """Fit the tenant's model on every matured Monday up to as_of and make it the active one,
-    promoted by 'system'. None for a tenant without a model or with too few decisions."""
+    promoted by 'system'. None for a tenant without a model, with too few decisions, or whose fit
+    fails the sign gate (stored as 'rejected' with its wrong_signs in metrics)."""
     with db.tenant_tx(tenant_id) as conn:
         tenant = conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
         frames = load_frames(conn, tenant_id)
@@ -95,20 +96,27 @@ def train_and_promote(db: Database, tenant_id, as_of: datetime) -> UUID | None:
     if decisions < tenant["config"]["model"]["min_decisions"]:
         return None
     artifact = model.fit(train)
-    artifact["platt"], metrics = _platt(artifact, train)
-    now = clock.now()
+    # design §6 gate: every behavioural sign matches risk_direction. shortcut: the recall@K
+    # gate needs the rolling-origin eval and is deferred, add it when retraining is scheduled
+    wrong = model.check_signs(artifact)
+    metrics = {"wrong_signs": wrong} if wrong else {}
+    if not wrong:
+        artifact["platt"], metrics = _platt(artifact, train)
+    status, now = ("rejected" if wrong else "active"), clock.now()
     with db.tenant_tx(tenant_id) as conn:
-        conn.execute("UPDATE models SET status = 'retired' WHERE status = 'active'")
-        return conn.execute(
+        if not wrong:
+            conn.execute("UPDATE models SET status = 'retired' WHERE status = 'active'")
+        model_id = conn.execute(
             "INSERT INTO models (version, status, artifact, manifest, label_version,"
             " train_window, metrics, trained_at, promoted_at, promoted_by)"
-            " SELECT coalesce(max(version), 0) + 1, 'active', %s, %s, %s, %s, %s, %s, %s,"
-            " 'system' FROM models RETURNING id",
-            (Jsonb(artifact), Jsonb(artifact["manifest"]), artifact["label_version"],
+            " SELECT coalesce(max(version), 0) + 1, %s, %s, %s, %s, %s, %s, %s, %s, %s"
+            " FROM models RETURNING id",
+            (status, Jsonb(artifact), Jsonb(artifact["manifest"]), artifact["label_version"],
              Jsonb({"first": grid[0].isoformat(), "last": grid[-1].isoformat(),
                     "label_cutoff": as_of.isoformat()}),
              Jsonb(metrics | {"n_train": artifact["n_train"], "n_decisions": decisions}),
-             now, now)).fetchone()["id"]
+             now, None if wrong else now, None if wrong else "system")).fetchone()["id"]
+    return None if wrong else model_id
 
 
 def backfill_runs(db: Database, tenant_id, weeks: int = 12, *, end: datetime) -> list[UUID]:
