@@ -246,8 +246,9 @@ fallback. Add credit (and `ANTHROPIC_API_KEY`, then redeploy) to get LLM-drafted
 **Deploying changed feature code.** Each model stores a hash of the feature code it was
 trained on (`registry.manifest()`, which covers `radar/features.py` and `radar/asof.py`).
 After a deploy that changes that code, scoring fails closed with an incident until each
-tenant has a model trained on the new code: run `RADAR_WORKER_DSN=<the Neon worker DSN> uv run
-radar train --tenant <slug>` for each tenant with a model, or repeat A4 and A5.
+tenant has a model trained on the new code: with `RADAR_WORKER_DSN` set to the worker DSN from
+A6 and `RADAR_PGBOUNCER=1`, run `uv run --extra ml radar train --tenant <slug>` for each tenant
+with a model, or repeat A4 and A5.
 
 ## B. Docker Compose (or any always-on host)
 
