@@ -3,7 +3,7 @@ the user, tenant and role; no request ever takes them from the URL, query or for
 
 import hmac
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypedDict
 from uuid import UUID
 
 import jinja2
@@ -21,8 +21,17 @@ class LoginRequired(Exception):
     """No user in the session; the app turns this into a redirect to /login."""
 
 
-def current_user(request: Request) -> dict:
-    """The session's user as rbac.authorize expects it: id, tenant_id, role, name."""
+class SessionUser(TypedDict):
+    """The plan's SessionUser; a dict keyed "id" (not user_id) because rbac.authorize (Ruling G)
+    takes the same dict the agent passes."""
+    id: UUID
+    tenant_id: UUID
+    role: str
+    name: str
+
+
+def current_user(request: Request) -> SessionUser:
+    """The session's user as rbac.authorize expects it."""
     s = request.session
     if "user_id" not in s:
         raise LoginRequired
@@ -30,10 +39,10 @@ def current_user(request: Request) -> dict:
             "name": s["name"]}
 
 
-User = Annotated[dict, Depends(current_user)]
+User = Annotated[SessionUser, Depends(current_user)]
 
 
-def tx(request: Request, user: dict):
+def tx(request: Request, user: SessionUser):
     """The user's tenant transaction; triggers audit writes as user:<id>."""
     return request.app.state.db.tenant_tx(user["tenant_id"], actor=f"user:{user['id']}")
 

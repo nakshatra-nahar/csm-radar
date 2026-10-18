@@ -322,6 +322,22 @@ def test_tick_endpoint_requires_the_bearer(web):
     assert unset.post("/internal/tick", headers=ok).status_code == 503
 
 
+def test_tick_and_app_refuse_an_unsafe_worker_role(web):
+    """Design §4.3: a worker DSN for the owner (a superuser here) must never run the jobs."""
+    ok = {"Authorization": "Bearer tick-secret"}
+    with fresh_database() as dsn:
+        app = create_app(settings(worker_dsn=dsn), web.web_db)
+        with pytest.raises(RuntimeError, match="unsafe"):
+            TestClient(app).post("/internal/tick", headers=ok)
+        assert app.state.db_worker is None  # the refused pool is closed, not kept
+        owner_db = Database(dsn)
+        try:
+            with pytest.raises(RuntimeError, match="unsafe"):
+                create_app(settings(), web.web_db, owner_db)
+        finally:
+            owner_db.close()
+
+
 def test_csp_header_present(web):
     r = TestClient(web.app).get("/login")
     assert r.headers["content-security-policy"] == CSP

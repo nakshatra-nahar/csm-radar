@@ -18,8 +18,10 @@ CSP = ("default-src 'self'; style-src 'self'; img-src 'self' data:; object-src '
 def create_app(settings: Settings, db_web: Database, db_worker: Database | None = None) -> FastAPI:
     """db_web serves every page as radar_web; db_worker (radar_worker) runs /internal/tick and
     is created from settings.worker_dsn on first use when not given."""
-    with db_web.system_tx() as conn:  # design §4.3: refuse a role RLS would not bind
-        assert_role_safety(conn)
+    for db in (db_web, db_worker):  # design §4.3: refuse a role RLS would not bind
+        if db is not None:
+            with db.system_tx() as conn:
+                assert_role_safety(conn)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings, app.state.db, app.state.db_worker = settings, db_web, db_worker
 

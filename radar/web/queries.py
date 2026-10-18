@@ -40,6 +40,12 @@ def worklist(conn, user_id: UUID, week: date) -> dict | None:
                         (user_id, week)).fetchone()
 
 
+def any_worklist(conn, week: date) -> bool:
+    """Whether the sweep froze any list in the tenant this week."""
+    return conn.execute("SELECT 1 FROM worklists WHERE week_start = %s LIMIT 1",
+                        (week,)).fetchone() is not None
+
+
 def worklist_rows(conn, wl: dict) -> list[dict]:
     """The frozen items in list order, scored by the run the list was frozen from."""
     rows = conn.execute(

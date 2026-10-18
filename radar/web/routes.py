@@ -44,10 +44,9 @@ def week(request: Request, user: User):
         team = rbac.team_ids(conn, user["id"])
         rows = [r for r in (queries.worklist_rows(conn, wl) if wl else [])
                 if rbac.authorize(user, r["owner_user_id"], team, "view")]
-        frozen_any = wl is not None or conn.execute(
-            "SELECT 1 FROM worklists WHERE week_start = %s LIMIT 1", (start,)).fetchone()
+        frozen_any = wl is not None or queries.any_worklist(conn, start)
         ctx = {"tenant": tenant, "week": start, "worklist": wl, "rows": rows,
-               "frozen_any": bool(frozen_any), "freshness": queries.freshness(conn),
+               "frozen_any": frozen_any, "freshness": queries.freshness(conn),
                "model": queries.active_model(conn)}
     return render(request, "week.html", user=user, **ctx)
 

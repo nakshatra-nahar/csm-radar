@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from radar import clock
 from radar.agent import jobs, worker
-from radar.db import Database
+from radar.db import Database, assert_role_safety
 from radar.ingest import feed, pipeline, webhooks
 
 router = APIRouter()
@@ -70,7 +70,14 @@ async def webhook(source: str, request: Request):
 def _worker_db(app) -> Database:
     with _worker_lock:  # two first ticks at once must not open two pools
         if app.state.db_worker is None:
-            app.state.db_worker = Database(app.state.settings.worker_dsn)
+            db = Database(app.state.settings.worker_dsn)
+            try:  # design §4.3: never run the jobs as a role RLS would not bind
+                with db.system_tx() as conn:
+                    assert_role_safety(conn)
+            except Exception:
+                db.close()
+                raise
+            app.state.db_worker = db
         return app.state.db_worker
 
 
