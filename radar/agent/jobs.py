@@ -83,35 +83,46 @@ def complete(conn: psycopg.Connection, job: Job, now: datetime | None = None) ->
     return cur.rowcount == 1
 
 
-def fail(conn: psycopg.Connection, job: Job, error: str, max_attempts: int = 5,
-         now: datetime | None = None) -> None:
-    """Requeue after a full-jitter backoff, or mark dead at max_attempts. Fenced like complete()."""
+def fail(conn: psycopg.Connection, job: Job, error: str, now: datetime | None = None) -> None:
+    """Requeue after a full-jitter backoff, or mark dead once attempts reach the row's
+    max_attempts (the column reap() reads too). Fenced like complete()."""
     now = now or clock.now()
-    if job.attempts >= max_attempts:
-        status, run_at, finished_at = "dead", None, now
-    else:
-        wait = random.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**job.attempts))
-        status, run_at, finished_at = "queued", now + timedelta(seconds=wait), None
-        if conn.execute(
-                "UPDATE jobs SET status = 'dead', finished_at = %s, lease_expires_at = NULL,"
-                " last_error = 'superseded: ' || %s"
-                " WHERE id = %s AND attempts = %s AND status = 'running' AND " + _HAS_TWIN,
-                (now, error, job.id, job.attempts)).rowcount:
-            return
-    conn.execute(
-        "UPDATE jobs SET status = %s, run_at = COALESCE(%s, run_at), finished_at = %s,"
-        " lease_expires_at = NULL, last_error = %s"
-        " WHERE id = %s AND attempts = %s AND status = 'running'",
-        (status, run_at, finished_at, error, job.id, job.attempts),
-    )
+    wait = random.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**job.attempts))
+    args = {"id": job.id, "n": job.attempts, "now": now, "error": error,
+            "run_at": now + timedelta(seconds=wait)}
+    fence = " WHERE id = %(id)s AND attempts = %(n)s AND status = 'running'"
+    dead = ("UPDATE jobs SET status = 'dead', finished_at = %(now)s, lease_expires_at = NULL,"
+            " last_error = ")
+    if conn.execute(dead + "%(error)s" + fence + " AND attempts >= max_attempts",
+                    args).rowcount:
+        return
+    superseded = dead + "'superseded: ' || %(error)s" + fence
+    if conn.execute(superseded + " AND " + _HAS_TWIN, args).rowcount:
+        return
+    try:
+        with conn.transaction():  # a savepoint: a twin committed since the check takes the slot
+            conn.execute("UPDATE jobs SET status = 'queued', run_at = %(run_at)s,"
+                         " lease_expires_at = NULL, last_error = %(error)s" + fence, args)
+    except psycopg.errors.UniqueViolation:
+        conn.execute(superseded, args)
 
 
 def reap(conn: psycopg.Connection, now: datetime | None = None) -> int:
     """Return expired leases to the queue; a job out of attempts goes dead instead.
 
     Without the dead branch a job that kills its worker every time would be retried forever.
+    A twin committed between the two statements collides on jobs_dedupe_idx: one retry sees
+    it and supersedes instead.
     """
     now = now or clock.now()
+    try:
+        with conn.transaction():  # a savepoint, so the retry runs in a clean transaction
+            return _reap(conn, now)
+    except psycopg.errors.UniqueViolation:
+        return _reap(conn, now)
+
+
+def _reap(conn: psycopg.Connection, now: datetime) -> int:
     superseded = conn.execute(
         "UPDATE jobs SET status = 'dead', finished_at = %(now)s, lease_expires_at = NULL,"
         " last_error = 'superseded' WHERE status = 'running' AND lease_expires_at < %(now)s"

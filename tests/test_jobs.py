@@ -132,13 +132,14 @@ def test_fenced_completion_after_lease_expiry(db):
 
 def test_backoff_and_dead(db, monkeypatch):
     monkeypatch.setattr(jobs.random, "uniform", lambda low, high: high)  # the longest wait
-    with db.system_tx() as conn:
+    with db.system_tx() as conn:  # fail() honours the row's max_attempts, as reap() does
         job_id = jobs.enqueue(conn, "brief", None, {}, run_at=T0)
+        conn.execute("UPDATE jobs SET max_attempts = 9 WHERE id = %s", (job_id,))
     now, waits = T0, []
     for _ in range(9):
         with db.system_tx() as conn:
             [job] = jobs.claim(conn, "w1", now=now)
-            jobs.fail(conn, job, f"boom {job.attempts}", max_attempts=9, now=now)
+            jobs.fail(conn, job, f"boom {job.attempts}", now=now)
         row = status(db, job_id)
         if row["status"] == "queued":
             assert row["lease_expires_at"] is None
@@ -153,9 +154,10 @@ def test_backoff_is_capped_at_an_hour(db, monkeypatch):
     monkeypatch.setattr(jobs.random, "uniform", lambda low, high: high)
     with db.system_tx() as conn:
         job_id = jobs.enqueue(conn, "brief", None, {}, run_at=T0)
-        conn.execute("UPDATE jobs SET attempts = 10 WHERE id = %s", (job_id,))
+        conn.execute("UPDATE jobs SET attempts = 10, max_attempts = 20 WHERE id = %s",
+                     (job_id,))
         [job] = jobs.claim(conn, "w1", now=T0)
-        jobs.fail(conn, job, "boom", max_attempts=20, now=T0)
+        jobs.fail(conn, job, "boom", now=T0)
     assert status(db, job_id)["run_at"] == T0 + timedelta(seconds=3600)
 
 
@@ -202,6 +204,35 @@ def test_fail_with_a_queued_twin_is_superseded(db):
     row = status(db, x.id)
     assert (row["status"], row["last_error"]) == ("dead", "superseded: boom")
     assert status(db, y)["status"] == "queued"
+
+
+def test_fail_survives_a_twin_committed_after_its_check(db, queue_dsn):
+    """A twin that is uncommitted when fail() looks for one, and commits before the requeue,
+    would collide on jobs_dedupe_idx: fail() then marks the job superseded instead of
+    raising."""
+    with db.system_tx() as conn:
+        jobs.enqueue(conn, "twin", None, {}, dedupe_key="twin:race", run_at=T0)
+        [x] = jobs.claim(conn, "w1", n=1, lease_s=60, now=T0)
+    other = psycopg.connect(queue_dsn)  # holds the twin, uncommitted
+    other.execute("INSERT INTO jobs (kind, payload, dedupe_key, run_at)"
+                  " VALUES ('twin', '{}', 'twin:race', %s)", (LATER,))
+    errors = []
+
+    def failing():
+        try:
+            with db.system_tx() as conn:
+                jobs.fail(conn, x, "boom", now=T0)
+        except Exception as e:  # noqa: BLE001 - the test reports whatever fail() raised
+            errors.append(e)
+    t = threading.Thread(target=failing)
+    t.start()
+    t.join(1.0)  # fail() is now waiting on the twin's index entry
+    other.commit()
+    other.close()
+    t.join()
+    assert errors == []
+    row = status(db, x.id)
+    assert (row["status"], row["last_error"]) == ("dead", "superseded: boom")
 
 
 def test_reap_with_a_queued_twin_does_not_wedge(db):
