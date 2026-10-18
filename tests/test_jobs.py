@@ -62,7 +62,7 @@ def test_requeue_after_running_allowed(db):
     with db.system_tx() as conn:
         first = jobs.enqueue(conn, "evaluate_rules", None, {"account_id": "a1"},
                              dedupe_key="a1", run_at=T0)
-        [claimed] = jobs.claim(conn, "w1", now=T0)
+        [claimed] = jobs.claim(conn, now=T0)
         again = jobs.enqueue(conn, "evaluate_rules", None, {"account_id": "a1"},
                              dedupe_key="a1", run_at=T0)
     assert claimed.id == first
@@ -73,8 +73,8 @@ def test_requeue_after_running_allowed(db):
 def test_claim_skips_jobs_not_yet_due(db):
     with db.system_tx() as conn:
         jobs.enqueue(conn, "later", None, {}, run_at=T0 + timedelta(minutes=1))
-        assert jobs.claim(conn, "w1", now=T0) == []
-        assert len(jobs.claim(conn, "w1", now=T0 + timedelta(minutes=1))) == 1
+        assert jobs.claim(conn, now=T0) == []
+        assert len(jobs.claim(conn, now=T0 + timedelta(minutes=1))) == 1
 
 
 def test_two_workers_never_claim_same_job(db):
@@ -87,7 +87,7 @@ def test_two_workers_never_claim_same_job(db):
         start.wait()
         while True:
             with db.system_tx() as conn:
-                batch = jobs.claim(conn, worker_id, n=7, now=T0)
+                batch = jobs.claim(conn, n=7, now=T0)
             if not batch:
                 return
             claimed[worker_id] += [job.id for job in batch]
@@ -108,19 +108,19 @@ def test_lane_priority(db):
         bulk = jobs.enqueue(conn, "bulk", None, {}, lane=2, run_at=T0 - timedelta(hours=1))
         sweep = jobs.enqueue(conn, "sweep", None, {}, lane=1, run_at=T0 - timedelta(hours=1))
         live = jobs.enqueue(conn, "live", None, {}, lane=0, run_at=T0)
-        assert [j.id for j in jobs.claim(conn, "w1", n=1, now=T0)] == [live]
-        assert [j.id for j in jobs.claim(conn, "w1", n=5, now=T0)] == [sweep, bulk]
+        assert [j.id for j in jobs.claim(conn, n=1, now=T0)] == [live]
+        assert [j.id for j in jobs.claim(conn, n=5, now=T0)] == [sweep, bulk]
 
 
 def test_fenced_completion_after_lease_expiry(db):
     with db.system_tx() as conn:
         job_id = jobs.enqueue(conn, "brief", None, {}, run_at=T0)
-        [stale] = jobs.claim(conn, "w1", lease_s=300, now=T0)
+        [stale] = jobs.claim(conn, lease_s=300, now=T0)
     assert stale.attempts == 1 and stale.lease_expires_at == T0 + timedelta(seconds=300)
     with db.system_tx() as conn:
         assert jobs.reap(conn, now=T0 + timedelta(seconds=299)) == 0
         assert jobs.reap(conn, now=T0 + timedelta(seconds=301)) == 1
-        [fresh] = jobs.claim(conn, "w2", now=T0 + timedelta(seconds=302))
+        [fresh] = jobs.claim(conn, now=T0 + timedelta(seconds=302))
     assert fresh.id == job_id and fresh.attempts == 2
     with db.system_tx() as conn:
         jobs.fail(conn, stale, "late failure", now=T0 + timedelta(seconds=303))
@@ -138,7 +138,7 @@ def test_backoff_and_dead(db, monkeypatch):
     now, waits = T0, []
     for _ in range(9):
         with db.system_tx() as conn:
-            [job] = jobs.claim(conn, "w1", now=now)
+            [job] = jobs.claim(conn, now=now)
             jobs.fail(conn, job, f"boom {job.attempts}", now=now)
         row = status(db, job_id)
         if row["status"] == "queued":
@@ -156,7 +156,7 @@ def test_backoff_is_capped_at_an_hour(db, monkeypatch):
         job_id = jobs.enqueue(conn, "brief", None, {}, run_at=T0)
         conn.execute("UPDATE jobs SET attempts = 10, max_attempts = 20 WHERE id = %s",
                      (job_id,))
-        [job] = jobs.claim(conn, "w1", now=T0)
+        [job] = jobs.claim(conn, now=T0)
         jobs.fail(conn, job, "boom", now=T0)
     assert status(db, job_id)["run_at"] == T0 + timedelta(seconds=3600)
 
@@ -168,7 +168,7 @@ def test_reap_kills_a_job_that_keeps_losing_its_lease(db):
     now = T0
     for _ in range(5):  # max_attempts column default
         with db.system_tx() as conn:
-            [job] = jobs.claim(conn, "w1", lease_s=60, now=now)
+            [job] = jobs.claim(conn, lease_s=60, now=now)
             now += timedelta(seconds=61)
             assert jobs.reap(conn, now=now) == 1
     row = status(db, job_id)
@@ -191,7 +191,7 @@ def _running_with_queued_twin(db, key):
     """(job X running with dedupe key `key`, id of its queued twin Y)."""
     with db.system_tx() as conn:
         jobs.enqueue(conn, "twin", None, {}, dedupe_key=key, run_at=T0)
-        [x] = jobs.claim(conn, "w1", n=1, lease_s=60, now=T0)
+        [x] = jobs.claim(conn, n=1, lease_s=60, now=T0)
         y = jobs.enqueue(conn, "twin", None, {}, dedupe_key=key, run_at=LATER)
     return x, y
 
@@ -212,7 +212,7 @@ def test_fail_survives_a_twin_committed_after_its_check(db, queue_dsn):
     raising."""
     with db.system_tx() as conn:
         jobs.enqueue(conn, "twin", None, {}, dedupe_key="twin:race", run_at=T0)
-        [x] = jobs.claim(conn, "w1", n=1, lease_s=60, now=T0)
+        [x] = jobs.claim(conn, n=1, lease_s=60, now=T0)
     other = psycopg.connect(queue_dsn)  # holds the twin, uncommitted
     other.execute("INSERT INTO jobs (kind, payload, dedupe_key, run_at)"
                   " VALUES ('twin', '{}', 'twin:race', %s)", (LATER,))
@@ -250,7 +250,7 @@ def test_reap_two_expired_twins_requeues_the_newer(db):
     with db.system_tx() as conn:
         for _ in range(2):
             jobs.enqueue(conn, "twin", None, {}, dedupe_key="twin:both", run_at=soon)
-            [_job] = jobs.claim(conn, "w1", n=1, lease_s=60, now=soon)
+            [_job] = jobs.claim(conn, n=1, lease_s=60, now=soon)
         older, newer = sorted(r["id"] for r in conn.execute(
             "SELECT id FROM jobs WHERE dedupe_key = 'twin:both'"))
         assert jobs.reap(conn, now=soon + timedelta(seconds=61)) == 2

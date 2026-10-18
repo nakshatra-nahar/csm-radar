@@ -95,4 +95,4 @@ def tick(request: Request):
         db = _worker_db(request.app)
     except UnsafeRole as e:  # fail closed, and say why; any other failure is a 500
         return JSONResponse({"detail": str(e)}, status_code=503)
-    return worker.run_for(db, worker_id="vercel-tick", budget_s=settings.tick_budget_s)
+    return worker.run_for(db, budget_s=settings.tick_budget_s)

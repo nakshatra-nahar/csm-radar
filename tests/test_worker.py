@@ -55,7 +55,7 @@ def world(empty, small_world_dir):
 
 def drain(db, at: datetime) -> dict:
     clock.freeze(at)
-    return worker.run_for(db, "w1", budget_s=120)
+    return worker.run_for(db, budget_s=120)
 
 
 def bootstrap_sweep(db, at: datetime) -> None:
@@ -153,11 +153,11 @@ def test_concurrent_ticks_do_not_double_open(world):
     clock.freeze(at)
     start = threading.Barrier(2)
 
-    def run(name):
+    def run():
         start.wait()
-        while worker.tick(world.db, name, at):
+        while worker.tick(world.db, at):
             pass
-    threads = [threading.Thread(target=run, args=(f"w{i}",)) for i in range(2)]
+    threads = [threading.Thread(target=run) for _ in range(2)]
     for t in threads:
         t.start()
     for t in threads:
@@ -174,7 +174,7 @@ def test_case_opening_waits_for_the_tenant_lock(world):
     """While another transaction holds the tenant's lock, a sweep scores but opens nothing;
     it opens its cases once the lock is released."""
     clock.freeze(T0)
-    sweep = threading.Thread(target=worker.tick, args=(world.db, "w1", T0))
+    sweep = threading.Thread(target=worker.tick, args=(world.db, T0))
     with world.db.tenant_tx(TALLY) as conn:
         handlers._lock(conn, TALLY)
         sweep.start()
@@ -299,7 +299,7 @@ def test_handler_failure_retries_then_dead(empty, monkeypatch):
     seen = []
     for n in range(5):  # backoff is capped at 1 h, so each hour the retry is due
         clock.freeze(T0 + n * timedelta(hours=1, minutes=1))
-        worker.tick(empty.db, "w1", clock.now())
+        worker.tick(empty.db, clock.now())
         seen.append(empty.owner.execute("SELECT status, attempts, last_error FROM jobs"
                                         " WHERE id = %s", (job_id,)).fetchone())
     assert [s["status"] for s in seen] == ["queued"] * 4 + ["dead"]
@@ -469,7 +469,7 @@ def test_tick_claims_jobs_due_at_its_now(empty, monkeypatch):
     later = T0 + timedelta(hours=1)
     with empty.db.system_tx() as conn:
         job_id = jobs.enqueue(conn, "noop", None, {}, run_at=later)
-    assert worker.tick(empty.db, "w1", later) == 1
+    assert worker.tick(empty.db, later) == 1
     job = empty.owner.execute("SELECT status, finished_at FROM jobs WHERE id = %s",
                               (job_id,)).fetchone()
     assert (job["status"], job["finished_at"]) == ("done", later)
@@ -480,14 +480,14 @@ def test_run_forever_survives_a_database_error(monkeypatch, error):
     import psycopg
     stop, calls = threading.Event(), []
 
-    def tick(db, worker_id, now):
+    def tick(db, now):
         calls.append(now)
         if len(calls) == 1:
             raise getattr(psycopg, error)("server closed the connection unexpectedly")
         stop.set()
         return 0
     monkeypatch.setattr(worker, "tick", tick)
-    worker.run_forever(None, "w1", stop, idle_sleep=0.01)
+    worker.run_forever(None, stop, idle_sleep=0.01)
     assert len(calls) == 2
 
 
@@ -577,6 +577,6 @@ def test_run_for_stops_at_its_time_budget_with_work_left(monkeypatch):
     a job), run_for returns once budget_s of wall time has passed."""
     ticks = iter(range(0, 10_000, 100))
     monkeypatch.setattr(worker.time, "monotonic", lambda: next(ticks))  # +100 s per call
-    monkeypatch.setattr(worker, "tick", lambda db, worker_id, now: 1)
-    out = worker.run_for(None, "w", budget_s=240)
+    monkeypatch.setattr(worker, "tick", lambda db, now: 1)
+    out = worker.run_for(None, budget_s=240)
     assert out["ticks"] == 3 and out["jobs"] == 3 and out["elapsed_s"] >= 240

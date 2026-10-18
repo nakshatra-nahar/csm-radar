@@ -48,13 +48,10 @@ def enqueue(conn: psycopg.Connection, kind: str, tenant_id: UUID | None, payload
         ).fetchone()
 
 
-def claim(conn: psycopg.Connection, worker_id: str, n: int = 10, lease_s: int = 300,
+def claim(conn: psycopg.Connection, n: int = 10, lease_s: int = 300,
           now: datetime | None = None) -> list[Job]:
-    """Lease up to n due jobs, live lane first. Concurrent claimers skip each other's rows.
-
-    worker_id is not stored: the jobs table has no owner column; the attempts fence
-    is what tells two claimers apart.
-    """
+    """Lease up to n due jobs, live lane first. Concurrent claimers skip each other's rows;
+    the attempts fence, not a worker id, tells two claimers apart."""
     now = now or clock.now()
     with conn.cursor(row_factory=class_row(Job)) as cur:
         return cur.execute(

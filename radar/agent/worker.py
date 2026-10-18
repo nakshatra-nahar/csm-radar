@@ -62,7 +62,7 @@ def schedule(db: Database, now: datetime) -> None:
                                  (Jsonb({"period": period}), t["id"]))
 
 
-def tick(db: Database, worker_id: str, now: datetime) -> int:
+def tick(db: Database, now: datetime) -> int:
     """Reap, schedule what is due at `now`, then claim and run up to MAX_JOBS_PER_TICK jobs
     one at a time (so jobs they enqueue run in this tick too, live lane first). Returns how
     many ran. One time source: claims and finishes use `now` plus the clock's progress since
@@ -75,7 +75,7 @@ def tick(db: Database, worker_id: str, now: datetime) -> int:
     schedule(db, now)
     for ran in range(MAX_JOBS_PER_TICK):
         with db.system_tx() as conn:
-            claimed = jobs.claim(conn, worker_id, n=1, now=at())
+            claimed = jobs.claim(conn, n=1, now=at())
         if not claimed:
             return ran
         job = claimed[0]
@@ -90,26 +90,26 @@ def tick(db: Database, worker_id: str, now: datetime) -> int:
     return MAX_JOBS_PER_TICK
 
 
-def run_for(db: Database, worker_id: str, budget_s: float) -> dict:
+def run_for(db: Database, budget_s: float) -> dict:
     """Tick until a tick runs nothing or budget_s of wall time has passed (one tick may
     overrun it)."""
     start, ticks, ran = time.monotonic(), 0, 0
     while True:
-        n = tick(db, worker_id, clock.now())
+        n = tick(db, clock.now())
         ticks, ran = ticks + 1, ran + n
         if n == 0 or time.monotonic() - start >= budget_s:
             return {"ticks": ticks, "jobs": ran,
                     "elapsed_s": round(time.monotonic() - start, 3)}
 
 
-def run_forever(db: Database, worker_id: str, stop: threading.Event,
+def run_forever(db: Database, stop: threading.Event,
                 idle_sleep: float = 1.0) -> None:
     """Tick until stopped. A transient database error (lost connection, pool timeout) is
     logged and retried after a capped exponential backoff instead of ending the worker."""
     failures = 0
     while not stop.is_set():
         try:
-            ran = tick(db, worker_id, clock.now())
+            ran = tick(db, clock.now())
         except (psycopg.OperationalError, psycopg.InterfaceError):  # InterfaceError: conn closed
             failures += 1
             log.exception("tick failed (%d in a row); backing off", failures)

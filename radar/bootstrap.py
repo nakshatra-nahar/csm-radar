@@ -181,10 +181,10 @@ def bootstrap(settings: Settings, scale: float = 1.0) -> dict:
                 train_and_promote(db, tid, now)
             backfill_runs(db, tid, end=now)
             _bootstrap_sweep(db, tid, now)
-        swept = worker.run_for(db, "bootstrap", budget_s=math.inf)  # until the queue is idle
+        swept = worker.run_for(db, budget_s=math.inf)  # until the queue is idle
         for slug in slugs:
             _freeze_this_week(db, tenant_id(slug), now)
-        briefs = worker.run_for(db, "bootstrap", budget_s=math.inf)
+        briefs = worker.run_for(db, budget_s=math.inf)
         buffered = {s: feed.load_buffer(db, tenant_id(s), settings.data_dir) for s in slugs}
     finally:
         db.close()

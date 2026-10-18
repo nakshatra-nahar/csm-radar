@@ -108,7 +108,7 @@ def run(dsn: str, days: int = 7, step_minutes: int = 15) -> dict:
             sizes, t0 = [size()], time.monotonic()
             for i in range(1, days * per_day + 1):
                 clock.freeze(start + i * step)
-                worker.run_for(db, "soak", settings.tick_budget_s)
+                worker.run_for(db, settings.tick_budget_s)
                 if i % per_day == 0:
                     sizes.append(size())
             wall = time.monotonic() - t0

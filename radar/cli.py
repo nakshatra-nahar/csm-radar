@@ -4,9 +4,7 @@ and push use the owner DSN."""
 import argparse
 import json
 import logging
-import os
 import signal
-import socket
 import sys
 import threading
 from pathlib import Path
@@ -72,7 +70,7 @@ def _worker(a, s: Settings) -> None:
         signal.signal(sig, lambda *_: stop.set())
     db = _worker_db(s)
     try:
-        worker.run_forever(db, f"{socket.gethostname()}:{os.getpid()}", stop)
+        worker.run_forever(db, stop)
     finally:
         db.close()
 
@@ -80,7 +78,7 @@ def _worker(a, s: Settings) -> None:
 def _tick(a, s: Settings) -> None:
     db = _worker_db(s)
     try:
-        _print(worker.run_for(db, "cli-tick", a.budget or s.tick_budget_s))
+        _print(worker.run_for(db, a.budget or s.tick_budget_s))
     finally:
         db.close()
 
