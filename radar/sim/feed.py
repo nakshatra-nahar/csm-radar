@@ -2,13 +2,14 @@
 against (design §3.5). Task 3 uses byte offsets into these files as its cursor."""
 
 import json
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 
 from radar.sim import emit_gmail, emit_product, emit_salesforce, emit_stripe, emit_zendesk
 from radar.sim.delivery import iso
+from radar.sim.params import HISTORY_END
 from radar.sim.truth import write_truth
 from radar.sim.world import simulate, tenant_rng
 from radar.tenants import TENANTS
@@ -28,7 +29,7 @@ def _sorted_lines(envelopes: list[dict]) -> list[tuple[str, str]]:
 
 def generate(out_dir: Path, seed: int = 7, scale: float = 1.0, tenants: list[str] | None = None,
              sim_end: date = date(2027, 4, 30),
-             history_end: datetime = datetime(2026, 10, 17, tzinfo=UTC),
+             history_end: datetime = HISTORY_END,
              count_only: bool = False) -> dict:
     """Simulate each tenant and write out_dir/feed/<slug>/<source>.jsonl, the truth parquet
     files and out_dir/truth/<slug>_identity.parquet. count_only writes nothing."""

@@ -12,7 +12,6 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from radar import model
-from radar.bootstrap import _platt
 from radar.registry import FEATURE_NAMES, FEATURES, manifest
 
 
@@ -95,9 +94,29 @@ def test_platt_fitted_only_for_a_miscalibrated_segment_with_enough_rows(train):
     fitted = model.fit(train)
     shifted = fitted | {"intercept": fitted["intercept"] + 1.5}  # overstates every p
     rows = train.assign(billing_interval="year")  # last 8 weeks: 480 rows in one segment
-    platt, metrics = _platt(shifted, rows)
+    platt, metrics = model.platt(shifted, rows)
     assert platt is not None and metrics["ece"]["year"]["ece"] > 0.02
     assert metrics["ece_platt"]["year"]["ece"] < metrics["ece"]["year"]["ece"]
     split = train.assign(billing_interval=np.where(train.index.get_level_values(
         "account_id") % 2 == 0, "year", "month"))  # 240 rows each: too few to calibrate
-    assert _platt(shifted, split)[0] is None
+    assert model.platt(shifted, split)[0] is None
+
+
+def test_platt_is_rejected_when_it_worsens_the_worst_segment():
+    """One pooled sigmoid cannot fix segments miscalibrated in opposite directions: Platt is
+    kept only if the worst qualifying segment's ECE falls."""
+    rng = np.random.default_rng(3)
+    n = 6000
+    x = rng.normal(size=n)
+    year = np.arange(n) % 3 == 0  # p understates year (2,000 rows), overstates month
+    true_logit = np.where(year, -1.0, -3.0) + x
+    rows = pd.DataFrame({"usage_drop": x, "billing_interval": np.where(year, "year", "month"),
+                         "label": (rng.random(n) < 1 / (1 + np.exp(-true_logit))).astype(int)},
+                        index=pd.MultiIndex.from_arrays(
+                            [np.arange(n), [pd.Timestamp("2026-01-05", tz="UTC")] * n],
+                            names=["account_id", "as_of"]))
+    artifact = {"features": ["usage_drop"], "impute": [0.0], "mean": [0.0], "scale": [1.0],
+                "coef": [1.0], "intercept": -2.0, "platt": None}
+    platt, metrics = model.platt(artifact, rows)
+    assert platt is None and "platt_rejected" in metrics
+    assert metrics["ece_platt"]["year"]["ece"] > metrics["ece"]["year"]["ece"]

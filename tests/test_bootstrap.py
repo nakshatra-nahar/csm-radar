@@ -19,7 +19,6 @@ from radar import clock, model
 from radar.agent import handlers
 from radar.agent.jobs import Job
 from radar.bootstrap import (
-    HISTORY_END,
     _freeze_this_week,
     bootstrap,
     replay_feed,
@@ -30,6 +29,7 @@ from radar.config import load_settings
 from radar.db import Database, UnsafeRole, owner_connect
 from radar.ingest import feed
 from radar.ops import PushError, _tool, prune, push
+from radar.sim.params import HISTORY_END
 from radar.tenants import TENANTS, runtime_config, tenant_id
 from tests.conftest import ADMIN_DSN, WEB_PASSWORD, WORKER_PASSWORD, _role_dsn, fresh_database
 

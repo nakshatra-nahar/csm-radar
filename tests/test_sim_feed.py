@@ -14,11 +14,11 @@ import pytest
 from radar.sim import INJECTION_ACCOUNT_NAME, VP_CASE_NAMES, generate
 from radar.sim.delivery import stripe_signature
 from radar.sim.names import INJECTION_TEXT
+from radar.sim.params import HISTORY_END
 from radar.tenants import TENANTS
 
 SOURCES = ("salesforce", "stripe", "zendesk", "gmail", "product")
 ENVELOPE = {"deliver_at", "source", "channel", "headers", "body", "meta"}
-HISTORY_END = datetime(2026, 10, 17, tzinfo=UTC)
 ISO_Z = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 
 

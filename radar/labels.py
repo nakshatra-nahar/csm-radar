@@ -9,7 +9,8 @@ from datetime import datetime
 import pandas as pd
 
 from radar.asof import Frames, resolver
-from radar.features import DAY, LIVE, _lookup, _tagged, compute_features
+from radar.features import DAY, LIVE, WARMUP, _lookup, _tagged, compute_features
+from radar.tenants import TENANTS
 
 WINDOW = 90 * DAY
 REACTIVATION = 30 * DAY
@@ -104,6 +105,13 @@ def churn_decisions(frames: Frames) -> pd.DataFrame:
 def snapshot_grid(start: datetime, end: datetime) -> list[datetime]:
     """Mondays 00:00 UTC in [start, end]."""
     return list(pd.date_range(pd.Timestamp(start).ceil("D"), end, freq="W-MON"))
+
+
+def training_grid(slug: str, as_of: datetime) -> list[datetime]:
+    """The training population's Mondays: from WARMUP after the tenant's last source
+    connected until the last window settled by as_of (as_of - MATURITY)."""
+    start = pd.Timestamp(max(TENANTS[slug].source_start.values()), tz="UTC")
+    return snapshot_grid(start + WARMUP, as_of - MATURITY)
 
 
 def build_training_set(frames: Frames, tenant: dict, snapshots: list[datetime],

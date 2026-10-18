@@ -7,10 +7,11 @@ import pytest
 
 from radar import diagnostics, model
 from radar.asof import load_frames
-from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
+from radar.bootstrap import replay_feed, seed_tenants_and_users
 from radar.db import Database
 from radar.registry import FEATURE_NAMES, FEATURES
 from radar.sim import generate
+from radar.sim.params import HISTORY_END
 from radar.tenants import tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 

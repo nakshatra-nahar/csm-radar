@@ -201,8 +201,9 @@ build was run are left out.
 ### Rolling-origin evaluation against the policies CSMs would otherwise use
 
 - **Context.** AUC does not say whether a CSM's ten slots go to the right accounts.
-- **Decision.** Monday snapshots; 4 origins 8 weeks apart; each trains on snapshots older
-  than origin minus 97 days and tests on the next 8 weeks. Headline: ARR-weighted recall@K
+- **Decision.** Monday snapshots; 4 origins 8 weeks apart; each trains on snapshots whose
+  labels had settled by the origin (T + 127 days), fitted as training deploys the model
+  (Platt step included), and tests on the next 8 weeks. Headline: ARR-weighted recall@K
   per CSM book per week, averaged. Every policy (random, renewal-date sort, ARR sort, rules,
   model, oracle, GBM) is scored on the same rows with the same slot floor. Paired cluster
   bootstrap CIs over accounts. Plus recall by churn cause, hindsight and naive leakage rows,
@@ -216,14 +217,17 @@ build was run are left out.
 
 - **Context.** The band uses lift, and expected ARR at risk uses p, so p should be calibrated.
 - **Decision.** Fit Platt on the latest 8 matured weeks only if a billing segment with at
-  least 300 rows has ECE above 0.02. Contributions are scaled so additivity still holds.
+  least 300 rows has ECE above 0.02, and keep it only if it lowers the worst such segment's
+  ECE (one pooled sigmoid cannot fix segments miscalibrated in opposite directions).
+  Contributions are scaled so additivity still holds.
   Isotonic is not used.
 - **Alternatives.** Always calibrate; isotonic regression.
 - **Why.** Isotonic overfits small samples and its ties reorder the top of the list. Platt is
   monotone in p, so the order by p does not change (the order by p x ARR can).
 - **Cost if wrong.** Small probability shifts.
-- **Code.** `radar/bootstrap.py` (`train_and_promote`), `radar/model.py`;
-  `tests/test_model.py::test_platt_keeps_additivity_and_ranking`.
+- **Code.** `radar/bootstrap.py` (`train_and_promote`), `radar/model.py` (`platt`);
+  `tests/test_model.py::test_platt_keeps_additivity_and_ranking`;
+  `tests/test_model.py::test_platt_is_rejected_when_it_worsens_the_worst_segment`.
 
 ### Promotion behind gates, with a human click for candidates
 
@@ -237,9 +241,9 @@ build was run are left out.
 - **Why.** Labels arrive 90 days late, and once CSMs act on the list, saved accounts become
   negatives; a person should look before the lists move.
 - **Cost if wrong.** Models go stale if nobody retrains. The design's fourth gate, "recall@K
-  beats renewal sort", is checked by `radar eval` (the model card's acceptance gates), not at
-  training time; the code carries a `shortcut:` comment to add it when retraining is
-  scheduled.
+  beats renewal sort on the latest origin", is checked by `radar eval` (the model card's
+  acceptance gates), not at training time; the code carries a `shortcut:` comment to add it
+  when retraining is scheduled.
 - **Code.** `radar/bootstrap.py` (`train_and_promote`), `radar/web/oversight.py` (`promote`);
   `tests/test_scoring.py::test_wrong_sign_fit_is_rejected_not_promoted`;
   `tests/test_web.py::test_promote_shows_band_changes_first_then_promotes`.

@@ -223,8 +223,10 @@ identity matches by method, jobs, LLM spend, incidents, models and the agent's a
 ## Evaluation
 
 How the model was tested: rolling-origin backtests on Monday snapshots, 4 origins 8 weeks
-apart over the last 32 weeks with settled labels. Each origin refits on snapshots at least
-97 days older (the 90-day horizon plus 7 days of label latency) and scores the next 8 weeks.
+apart over the last 32 weeks with settled labels. Each origin refits, as training deploys the
+model (Platt step included), on snapshots whose labels had settled by the origin (at least
+127 days older: the 90-day horizon, the 30-day reactivation check and 7 days of delivery
+lag) and scores the next 8 weeks. The recall gate is checked on the latest origin.
 The headline is **recall@K**: the share of churned ARR that sat on each CSM's list of up to
 K = 10, computed weekly across every book and averaged over test weeks. Intervals are a
 paired cluster bootstrap over accounts (1,000 resamples). Kitewire has no model; it is off by

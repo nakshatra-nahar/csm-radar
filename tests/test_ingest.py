@@ -6,11 +6,12 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from radar.bootstrap import HISTORY_END, seed_tenants_and_users
+from radar.bootstrap import seed_tenants_and_users
 from radar.db import Database
 from radar.ingest import feed, webhooks
 from radar.ingest.normalize import normalize
 from radar.sim import staff
+from radar.sim.params import HISTORY_END
 from radar.tenants import tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 from tests.payloads import FIXTURES, T0, account, at, golden, ingest, iso, rows, sf, signed, stripe

@@ -14,9 +14,9 @@ from radar.agent import brief, evidence, template, validate
 from radar.agent.evidence import build_pack
 from radar.agent.llm import FakeClient, LLMResult, cost_usd
 from radar.asof import load_frames
-from radar.bootstrap import HISTORY_END
 from radar.db import owner_connect
 from radar.sim import INJECTION_ACCOUNT_NAME
+from radar.sim.params import HISTORY_END
 from radar.tenants import tenant_id
 from tests.conftest import add_case, add_event
 

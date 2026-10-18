@@ -4,15 +4,12 @@ and their briefs, and the rest of the feed buffered in the database. Idempotent.
 
 import logging
 import math
-from datetime import UTC, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-import numpy as np
-import pandas as pd
 from psycopg.types.json import Jsonb
-from sklearn.linear_model import LogisticRegression
 
 from radar import clock, model
 from radar.agent import jobs, worker
@@ -22,15 +19,12 @@ from radar.config import Settings
 from radar.db import Database, assert_role_safety, owner_connect
 from radar.ingest import feed
 from radar.ingest.pipeline import IngestStats
-from radar.labels import MATURITY, build_training_set, snapshot_grid
+from radar.labels import build_training_set, snapshot_grid, training_grid
 from radar.migrate import migrate
 from radar.scoring import score_tenant
 from radar.sim import generate, staff
 from radar.tenants import TENANTS, runtime_config, tenant_id
 
-HISTORY_END = datetime(2026, 10, 17, tzinfo=UTC)  # the generator's default "now"
-CALIBRATION_WEEKS = 8
-ECE_MAX, ECE_MIN_ROWS = 0.02, 300  # design §6: Platt only past this error, on enough rows
 log = logging.getLogger(__name__)
 
 
@@ -80,46 +74,18 @@ def replay_feed(db: Database, tenant_id, data_dir: Path, until: datetime) -> Ing
     return feed.deliver_due(db, tenant_id, until, data_dir)
 
 
-def _ece(artifact: dict, rows: pd.DataFrame) -> dict[str, dict]:
-    from radar.evaluate import _reliability  # evaluate imports this module: import late
-    p, _ = model.predict(artifact, rows)
-    t = pd.DataFrame({"model": p, "label": rows["label"].to_numpy(),
-                      "billing_interval": rows["billing_interval"].to_numpy()})
-    return {seg: {"rows": v["rows"], "ece": v["ece"]} for seg, v in _reliability(t).items()}
-
-
-def _platt(artifact: dict, train: pd.DataFrame) -> tuple[dict | None, dict]:
-    """(platt, metrics): Platt (a, b) fitted on the latest matured weeks when a billing
-    interval with enough rows is miscalibrated there (design §6, Ruling Z)."""
-    weeks = sorted(set(train.index.get_level_values("as_of")))[-CALIBRATION_WEEKS:]
-    recent = train[train.index.get_level_values("as_of").isin(weeks)]
-    before = _ece(artifact, recent)
-    if not any(v["rows"] >= ECE_MIN_ROWS and v["ece"] > ECE_MAX for v in before.values()):
-        return None, {"ece": before}
-    p, _ = model.predict(artifact, recent)
-    logit = np.log(p / (1 - p)).reshape(-1, 1)
-    lr = LogisticRegression(C=np.inf).fit(logit, recent["label"])  # unpenalised
-    platt = {"a": float(lr.intercept_[0]), "b": float(lr.coef_[0, 0])}
-    if platt["b"] <= 0:  # a non-increasing map would reorder the top-K: leave p as it is
-        return None, {"ece": before, "platt_rejected": platt}
-    return platt, {"ece": before, "ece_platt": _ece(artifact | {"platt": platt}, recent)}
-
-
 def train_and_promote(db: Database, tenant_id, as_of: datetime) -> UUID | None:
     """Fit the tenant's model on every matured Monday up to as_of and make it the active one,
     promoted by 'system'. None for a tenant without a model, with too few decisions, or whose fit
     fails the sign gate (stored as 'rejected' with its wrong_signs in metrics)."""
     with db.tenant_tx(tenant_id) as conn:
         tenant = conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
+        if not TENANTS[tenant["slug"]].has_model:
+            return None
         frames = load_frames(conn, tenant_id)
-    spec = TENANTS[tenant["slug"]]
-    if not spec.has_model:
-        return None
-    # training starts once every source has been connected for 120 days (Task 5)
-    start = datetime.combine(max(spec.source_start.values()), datetime.min.time(), UTC)
-    grid = snapshot_grid(start + timedelta(days=120), as_of - MATURITY)
+    grid = training_grid(tenant["slug"], as_of)
     train = build_training_set(frames, tenant, grid, as_of)
-    decisions = train.index.get_level_values("account_id")[train["label"] == 1].nunique()
+    decisions = model.decisions(train)
     if decisions < tenant["config"]["model"]["min_decisions"]:
         return None
     artifact = model.fit(train)
@@ -128,7 +94,7 @@ def train_and_promote(db: Database, tenant_id, as_of: datetime) -> UUID | None:
     wrong = model.check_signs(artifact)
     metrics = {"wrong_signs": wrong} if wrong else {}
     if not wrong:
-        artifact["platt"], metrics = _platt(artifact, train)
+        artifact["platt"], metrics = model.platt(artifact, train)
     status, now = ("rejected" if wrong else "active"), clock.now()
     with db.tenant_tx(tenant_id) as conn:
         if not wrong:

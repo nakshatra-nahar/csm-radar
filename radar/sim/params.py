@@ -3,8 +3,9 @@
 Rates are annual unless named `_weekly` or `_monthly`. Health effects are level offsets on h.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 
+HISTORY_END = datetime(2026, 10, 17, tzinfo=UTC)  # the generator's default "now"
 PARAMS: dict = {
     "sim_start": date(2022, 2, 28),  # a Monday; weeks run Monday to Sunday
     # account start dates are uniform over this window (per tenant)

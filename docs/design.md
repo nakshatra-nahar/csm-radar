@@ -327,7 +327,7 @@ Missing-data semantics:
   - at least 100 matured decisions in training.
 
   Promotion is an admin click that shows the tier diff first. It takes effect at the next sweep.
-- Calibration: check reliability per billing interval. Add Platt (sigmoid) on the latest matured slice only if ECE > 0.02 for a segment with >= 300 rows. Isotonic is not used: there is too little data, and its ties reorder the top-K.
+- Calibration: check reliability per billing interval. Add Platt (sigmoid) on the latest matured slice only if ECE > 0.02 for a segment with >= 300 rows, and keep it only if it lowers the worst such segment's ECE. Isotonic is not used: there is too little data, and its ties reorder the top-K.
 - GBM (sklearn HistGradientBoosting) is one diagnostic row in the model card that answers "is there structure LR misses?". It has no serving path.
 
 ## 7. Evaluation (how we know it works)
@@ -335,7 +335,7 @@ Missing-data semantics:
 `radar eval --tenant X` runs as the owner, reads `data/truth`, and writes `docs/model-card-<tenant>.md` plus `eval/<tenant>.json`.
 
 - Snapshot grid: Mondays 00:00 UTC.
-- Rolling origins: every 8 weeks across the last 32 weeks of matured snapshots. Each origin trains on snapshots with `T < origin - 97 days` (the 90-day horizon plus 7 days of label latency), and tests on the next 8 weeks.
+- Rolling origins: every 8 weeks across the last 32 weeks of matured snapshots. Each origin trains on snapshots whose labels had settled by the origin (`T + 127 days <= origin`: the 90-day window, the 30-day reactivation check and 7 days of delivery lag, as in §5.2), with the deployed Platt step, and tests on the next 8 weeks.
 - Headline metric: weekly recall@K and precision@K in each CSM's book. Books use the owner as of T. Recall is ARR-weighted. The figures are averaged over test weeks, with lift@K = precision@K / base rate.
 - Secondary metrics:
   - ROC-AUC, PR-AUC, Brier;
@@ -348,7 +348,7 @@ Missing-data semantics:
 - Hindsight vs point-in-time: the same split, with features computed ignoring `available_at`. The gap is the leak the design prevents.
 - Ablation: drop each source group and report Δ recall@K. This gives the integration priority list.
 - The VP cases' weekly rank, under renewal-sort vs the model, from the origin that never saw them.
-- Outage-week replay: new cases per CSM per week, and breaker incidents.
+- Outage-week replay: new cases per CSM per week, and breaker incidents. The model card counts new model slots; must-act cases and the breaker are covered by the policy test's outage replay.
 
 CI runs the full pipeline on a small world (~600 accounts, fixed seed) with loose floors: the model beats random, signs pass, every metric is computed. The full-world eval is run locally and its outputs are committed.
 

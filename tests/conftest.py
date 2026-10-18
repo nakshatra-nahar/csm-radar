@@ -10,10 +10,11 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from radar import clock, model
-from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users, train_and_promote
+from radar.bootstrap import replay_feed, seed_tenants_and_users, train_and_promote
 from radar.db import Database, owner_connect
 from radar.migrate import migrate
 from radar.sim import generate, staff
+from radar.sim.params import HISTORY_END
 from radar.tenants import TENANTS, runtime_config, tenant_id
 
 ADMIN_DSN = os.environ.get(

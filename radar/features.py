@@ -16,6 +16,7 @@ from radar.ingest.normalize import HARD_BOUNCE
 from radar.tenants import TENANTS
 
 DAY = pd.Timedelta(days=1)
+WARMUP = 120 * DAY  # every source connected this long before T (Task 5's training population)
 OPEN = ["new", "open", "pending", "hold"]
 URGENT = ["high", "urgent"]
 LIVE = ["active", "past_due", "trialing"]  # a subscription the customer still has
@@ -360,7 +361,7 @@ def eligible(s: Snapshot) -> pd.Series:
 def _sources_connected(s: Snapshot) -> bool:
     """Every source connected 120 days before T (Task 5's training population)."""
     sources = TENANTS[s.tenant["slug"]].source_start
-    return all(s.source_start(source) <= s.T - 120 * DAY for source in sources)
+    return all(s.source_start(source) <= s.T - WARMUP for source in sources)
 
 
 def _owner(s: Snapshot) -> pd.Series:

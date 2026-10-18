@@ -8,7 +8,6 @@ docs/model-card-<slug>.md and eval/<slug>.json.
 
 import dataclasses
 import json
-from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -22,14 +21,13 @@ from sklearn.preprocessing import StandardScaler
 
 from radar import diagnostics, model, policy
 from radar.asof import Frames, latest, load_frames, resolver
-from radar.bootstrap import HISTORY_END
 from radar.config import load_settings
 from radar.db import Database
 from radar.features import compute_features
-from radar.labels import MATURITY, churn_decisions, label_rows, snapshot_grid
+from radar.labels import MATURITY, churn_decisions, label_rows, snapshot_grid, training_grid
 from radar.registry import FEATURE_NAMES, FEATURES, rules_score
-from radar.sim.params import PARAMS
-from radar.tenants import TENANTS, tenant_id
+from radar.sim.params import HISTORY_END, PARAMS
+from radar.tenants import tenant_id
 
 __all__ = ["rules_score", "topk_by_book", "slot_floor", "naive_frames", "current_state", "run",
            "acceptance", "render_model_card"]
@@ -37,8 +35,9 @@ __all__ = ["rules_score", "topk_by_book", "slot_floor", "naive_frames", "current
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]
 GROUPS = ["product", "zendesk", "gmail", "billing", "crm"]
 WEEK = pd.Timedelta(weeks=1)
-LATENCY = pd.Timedelta(days=97)  # the 90-day horizon plus 7 days of label latency (§7)
 BOOT = 1000
+# design §3.6 difficulty bands: the oracle's AUC range, and caps on one feature and the model
+GATES = {"oracle_auc": (0.80, 0.92), "max_single_auc": 0.72, "full_model_auc": 0.86}
 C_GRID = (0.1, 10.0)  # §6: C stays 1.0; these refits are a sensitivity line, not tuning
 
 
@@ -143,6 +142,20 @@ def _naive_fit(train: pd.DataFrame, test: pd.DataFrame, naive: pd.DataFrame,
         current_state(test, naive, frames)[cols])[:, 1]
 
 
+def _train_rows(feats: pd.DataFrame, frames: Frames, origin: pd.Timestamp) -> pd.DataFrame:
+    """An origin's training rows: snapshots whose label is settled by it (T + MATURITY <=
+    origin, labels.MATURITY), labelled only from what had arrived by it."""
+    as_of = feats.index.get_level_values("as_of")
+    return label_rows(feats[as_of + MATURITY <= origin], churn_decisions(_cut(frames, origin)))
+
+
+def _deployed(train: pd.DataFrame, *args, **kwargs) -> dict:
+    """model.fit plus the Platt step train_and_promote adds, so a backtest scores what
+    bootstrap deploys."""
+    artifact = model.fit(train, *args, **kwargs)
+    return artifact | {"platt": model.platt(artifact, train)[0]}
+
+
 def _without(group: str) -> list[str]:
     return [d.name for d in FEATURES if group not in d.source.split("+")]
 
@@ -151,12 +164,11 @@ def _grids(tenant: dict, truth) -> tuple[list, list]:
     """(matured Mondays, Mondays to compute features for): training starts 120 days after the
     last source connected; a label at T is settled at T + 127 days; the VP cases need weeks
     up to their decisions, which may not have matured."""
-    start = pd.Timestamp(max(TENANTS[tenant["slug"]].source_start.values()), tz="UTC")
-    matured = snapshot_grid(start + timedelta(days=120), HISTORY_END - MATURITY)
+    matured = training_grid(tenant["slug"], HISTORY_END)
     end = matured[-1]
     if truth is not None:
         end = max([end, *truth["accounts"].loc[truth["accounts"]["vp_case"], "decision_at"]])
-    return matured, snapshot_grid(start + timedelta(days=120), end)
+    return matured, snapshot_grid(matured[0], end)
 
 
 def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
@@ -173,29 +185,31 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     starts = matured[-origins * step_weeks:][::step_weeks]
     tests, artifacts, counts = [], {}, []
     for origin in starts:
-        train = label_rows(feats[as_of < origin - LATENCY], churn_decisions(_cut(frames, origin)))
+        train = _train_rows(feats, frames, origin)
         test = label_rows(feats[(as_of >= origin) & (as_of < origin + step)], decisions)
-        artifacts[origin] = model.fit(train)
+        artifacts[origin] = _deployed(train)
         gbm = HistGradientBoostingClassifier(random_state=0).fit(train[FEATURE_NAMES],
                                                                  train["label"])
         # reindex: hindsight applies later merges, so a merged-away account may be missing
-        hind_model = model.fit(hind.reindex(train.index).assign(label=train["label"]))
+        hind_model = _deployed(hind.reindex(train.index).assign(label=train["label"]))
         test = test.assign(
             model=model.predict(artifacts[origin], test)[0], rules=rules_score(test),
             gbm=gbm.predict_proba(test[FEATURE_NAMES])[:, 1],
             hindsight=model.predict(hind_model, hind.reindex(test.index))[0],
             naive=_naive_fit(train, test, naive, frames),
-            **{f"without_{g}": model.predict(model.fit(train, _without(g)), test)[0]
+            **{f"without_{g}": model.predict(_deployed(train, _without(g)), test)[0]
                for g in GROUPS},
-            **{f"c_{c}": model.predict(model.fit(train, C=c), test)[0] for c in C_GRID})
+            **{f"c_{c}": model.predict(_deployed(train, C=c), test)[0] for c in C_GRID},
+            origin=origin)
         if truth is not None:
             test["oracle"] = _oracle_fit(train, test, frames.accounts, truth["weekly"])
         tests.append(test)
         counts.append({"origin": origin, "train_from": train.index.get_level_values("as_of").min(),
                        "train_to": train.index.get_level_values("as_of").max(),
                        "test_from": origin, "test_to": origin + step - WEEK,
-                       "train_rows": len(train), "train_decisions": _decisions(train),
-                       "test_rows": len(test), "test_decisions": _decisions(test)})
+                       "train_rows": len(train), "train_decisions": model.decisions(train),
+                       "test_rows": len(test), "test_decisions": model.decisions(test),
+                       "platt": artifacts[origin]["platt"]})
     t = pd.concat(tests).reset_index()
     arr = t["arr_minor"].astype(float)
     t["renewal"] = -(t["term_end"] - t["as_of"]).dt.days  # sooner term end first
@@ -215,8 +229,14 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
                 for p in POLICIES if f"w_{p}" in t}
     recall = policies["model"]["recall_at_k_arr"]
 
-    def recall_of(col: str) -> float:
-        return _metrics(t["label"], arr, t[f"w_{col}"], t["as_of"])["recall_at_k_arr"]
+    def recall_of(col: str, rows: pd.Series | slice = slice(None)) -> float:
+        return _metrics(t["label"][rows], arr[rows], t[f"w_{col}"][rows],
+                        t["as_of"][rows])["recall_at_k_arr"]
+
+    for o in counts:  # design §6 gate: the latest origin
+        mine = t["origin"] == o["origin"]
+        o["recall_model"], o["recall_renewal_sort"] = (
+            recall_of("model", mine), recall_of("renewal_sort", mine))
 
     ablated = {g: recall_of(f"without_{g}") for g in GROUPS}
 
@@ -227,7 +247,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     result = {
         "tenant": tenant["slug"], "k": k, "policies": policies,
         "ci": _ci(t, np.random.default_rng(0)),
-        "reliability": _reliability(t), "lead_time": _lead_time(t),
+        "reliability": model.reliability(t), "lead_time": _lead_time(t),
         "hindsight_vs_pit": {"pit_auc": policies["model"]["roc_auc"],
                              "hindsight_auc": float(roc_auc_score(t["label"], t["hindsight"])),
                              "naive_auc": float(roc_auc_score(t["label"], t["naive"])),
@@ -245,7 +265,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
                        "full_model_auc": float(table.loc["full_model", "single_auc"]),
                        "single_auc": single.to_dict()},
         "counts": {"origins": counts, "final_train_rows": len(train_all),
-                   "final_train_decisions": _decisions(train_all),
+                   "final_train_decisions": model.decisions(train_all),
+                   "step_weeks": step_weeks,
                    "coverage": {"telemetry_linked": float(t["telemetry_linked"].mean()),
                                 "gmail": float(t["days_since_customer_email"].notna().mean()),
                                 "coverage_ok": float(t["coverage_ok"].mean())}}}
@@ -273,10 +294,6 @@ def _renewal_vs_random(recall_ci: dict) -> str | None:
     return (f"- Renewal sort does {verdict} random because accounts near renewal have mostly"
             " already announced their decision and left the worklist, so the ones left are"
             " mostly renewers.")
-
-
-def _decisions(rows: pd.DataFrame) -> int:
-    return int(rows.index.get_level_values("account_id")[rows["label"] == 1].nunique())
 
 
 def _ci(t: pd.DataFrame, rng: np.random.Generator) -> dict:
@@ -314,18 +331,6 @@ def _ci(t: pd.DataFrame, rng: np.random.Generator) -> dict:
     for vs in ("renewal_sort", "rules"):
         out[f"model_minus_{vs}"] = interval(recall["model"] - recall[vs],
                                             point["model"] - point[vs])
-    return out
-
-
-def _reliability(t: pd.DataFrame) -> dict:
-    """Model p in 10 quantile bins per Stripe billing interval (design §6), with the expected
-    calibration error. Accounts without a Stripe subscription form the 'none' segment."""
-    out = {}
-    for name, seg in t.groupby(t["billing_interval"].fillna("none")):
-        bins = seg.groupby(pd.qcut(seg["model"], 10, duplicates="drop"), observed=True).agg(
-            mean_p=("model", "mean"), rate=("label", "mean"), rows=("label", "size"))
-        ece = float((bins["rows"] * (bins["mean_p"] - bins["rate"]).abs()).sum() / len(seg))
-        out[name] = {"rows": len(seg), "ece": ece, "bins": bins.to_dict("records")}
     return out
 
 
@@ -440,15 +445,19 @@ def _identity(frames: Frames, truth: pd.DataFrame) -> dict:
 
 def acceptance(result: dict) -> list[str]:
     """Violations of the design §3.6 difficulty bands and of the §6 promotion floors."""
-    d, p, out = result["difficulty"], result["policies"], []
-    if "oracle_auc" in d and not 0.80 <= d["oracle_auc"] <= 0.92:
-        out.append(f"oracle AUC {d['oracle_auc']:.3f} is outside [0.80, 0.92]")
-    if d["max_single_auc"] > 0.72:
-        out.append(f"{d['max_single_feature']} alone has AUC {d['max_single_auc']:.3f} > 0.72")
-    if d["full_model_auc"] > 0.86:
-        out.append(f"the full observable model has AUC {d['full_model_auc']:.3f} > 0.86")
-    if not p["model"]["recall_at_k_arr"] > p["renewal_sort"]["recall_at_k_arr"]:
-        out.append("model recall@K does not beat the renewal-date sort")
+    d, out = result["difficulty"], []
+    lo, hi = GATES["oracle_auc"]
+    if "oracle_auc" in d and not lo <= d["oracle_auc"] <= hi:
+        out.append(f"oracle AUC {d['oracle_auc']:.3f} is outside [{lo:.2f}, {hi:.2f}]")
+    if d["max_single_auc"] > GATES["max_single_auc"]:
+        out.append(f"{d['max_single_feature']} alone has AUC {d['max_single_auc']:.3f}"
+                   f" > {GATES['max_single_auc']:.2f}")
+    if d["full_model_auc"] > GATES["full_model_auc"]:
+        out.append(f"the full observable model has AUC {d['full_model_auc']:.3f}"
+                   f" > {GATES['full_model_auc']:.2f}")
+    latest = result["counts"]["origins"][-1]
+    if not latest["recall_model"] > latest["recall_renewal_sort"]:
+        out.append("model recall@K does not beat the renewal-date sort on the latest origin")
     if result["signs"]:
         out.append(f"coefficients with the wrong sign: {', '.join(result['signs'])}")
     return out
@@ -500,8 +509,9 @@ def _vp_lines(case: dict, k: int) -> list[str]:
         n = (decided - pd.Timestamp(at)).days // 7
         return f"from {_day(at)} ({n} week{'s' * (n != 1)} before)"
 
-    return [f"**{case['name']}** (cause: {case['cause']}) decided {_day(decided)}. Top {k}"
-            f" under the model {first('model')}; under renewal sort {first('renewal_sort')}.",
+    return [f"**{case['name']}** (cause: {case['cause']}) decided {_day(decided)}. In the"
+            f" CSM's list of up to {k} under the model {first('model')}; under renewal sort"
+            f" {first('renewal_sort')}.",
             "", "Weekly rank in the CSM's book over the 20 weeks before the decision (- means"
             " not yet in the renewal window; below floor means its expected ARR at risk is"
             " under the slot floor, so the model would not serve it):", "",
@@ -512,6 +522,7 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     """Markdown in design §7 order, short sentences, numbers with their intervals."""
     r, k = result, result["k"]
     p, ci, origins = r["policies"], r["ci"], r["counts"]["origins"]
+    step = r["counts"]["step_weeks"]
     model_recall = ci["recall"]["model"]
     violations = acceptance(r)
     out = [f"# Model card: {tenant_slug}", "",
@@ -539,12 +550,15 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             "- " + ("All acceptance gates pass." if not violations
                     else "Acceptance gates failed: " + "; ".join(violations) + "."))
     section("How it was tested",
-            f"Snapshots are Mondays. {len(origins)} origins, 8 weeks apart, cover the last"
-            f" {8 * len(origins)} weeks with settled labels ({_day(origins[0]['test_from'])} to"
-            f" {_day(origins[-1]['test_to'])}). At each origin the model is refit on snapshots"
-            " at least 97 days older, labelled only with what had arrived by the origin, then"
-            " scored on the next 8 weeks. Test labels use full hindsight. A book is the"
-            " accounts a CSM owns at the snapshot.", "",
+            f"Snapshots are Mondays. {len(origins)} origins, {step} weeks apart, cover the last"
+            f" {step * len(origins)} weeks with settled labels"
+            f" ({_day(origins[0]['test_from'])} to {_day(origins[-1]['test_to'])}). At each"
+            " origin the model is refit, as training deploys it (Platt step included), on"
+            f" snapshots whose labels had settled by then (at least {MATURITY.days} days older:"
+            " the 90-day window, the 30-day reactivation check and a week of delivery lag),"
+            " labelled only with what had arrived by the origin, then scored on the next"
+            f" {step} weeks. Test labels use full hindsight. A book is the accounts a CSM owns"
+            " at the snapshot.", "",
             "| origin | train snapshots | train rows | train decisions | test rows |"
             " test decisions |", "|---|---|---|---|---|---|",
             *[f"| {_day(o['origin'])} | {_day(o['train_from'])} to {_day(o['train_to'])} |"
@@ -572,12 +586,17 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
               for name, m in p.items()])
 
     lead, rel = r["lead_time"], r["reliability"]
+    platted = sum(o["platt"] is not None for o in origins)
     section("Ranking quality and calibration",
-            "Reliability of the model's probability, 10 quantile bins per segment. Design §6"
-            " adds a Platt step only if the error (ECE) exceeds 0.02 in a segment with at"
-            " least 300 rows.", "",
+            "Reliability of the model's probability, 10 quantile bins per segment. Training"
+            f" (design §6) adds a Platt step only if the error (ECE) exceeds {model.ECE_MAX}"
+            f" in a segment with at least {model.ECE_MIN_ROWS} rows on the latest"
+            f" {model.CALIBRATION_WEEKS} weeks, and keeps it only if it lowers the worst such"
+            " segment's error. The backtest scores each origin's model as training would"
+            f" deploy it: Platt was applied at {platted} of {len(origins)} origins.", "",
             *[f"- {BILLED[seg]}: {v['rows']:,} rows, ECE {v['ece']:.3f}"
-              + (" (needs Platt)" if v["ece"] > 0.02 and v["rows"] >= 300 else "")
+              + (f" (above {model.ECE_MAX})"
+                 if v["ece"] > model.ECE_MAX and v["rows"] >= model.ECE_MIN_ROWS else "")
               for seg, v in rel.items()])
     section("Lead time",
             f"Of {lead['decisions']} churn decisions in the test weeks, the model flagged"
@@ -586,10 +605,9 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             f" {_pct(lead['share_6w'])} of all decisions were flagged at least 6 weeks ahead."
             " The label horizon caps lead time at about 13 weeks.")
     section("Confidence intervals",
-            "Paired cluster bootstrap over accounts, 1,000 resamples: an account's weeks stay"
-            " together, and both policies are scored on the same resample.", "",
-            f"- Model minus renewal sort: {_ci_text(ci['model_minus_renewal_sort'], True)}.",
-            f"- Model minus rules: {_ci_text(ci['model_minus_rules'], True)}.")
+            f"Paired cluster bootstrap over accounts, {BOOT:,} resamples: an account's weeks"
+            " stay together, and both policies are scored on the same resample. The"
+            " differences are in the Summary.")
     if "by_cause" in r:
         causes = r["by_cause"]
         pooled = causes["all unforecastable"]
@@ -639,9 +657,11 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     section("Outage week",
             "No outage week falls in the test windows." if o["outage_max_new"] is None else
             f"In the week the outage tickets arrived ({_day(o['outage_week'])}), at most"
-            f" {o['outage_max_new']} account(s) newly entered any one CSM's top {k}. A median"
-            f" week has {_num(o['median_max_new'], '.0f')}. The outage does not flood the"
-            " worklist.")
+            f" {o['outage_max_new']} account(s) newly entered any one CSM's model list of up to"
+            f" {k}. A median week has {_num(o['median_max_new'], '.0f')}. This counts model"
+            " slots only, which K caps; must-act cases from the outage tickets are capped by"
+            " the breaker"
+            " (`tests/test_policy.py::test_outage_week_replay_caps_new_cases_per_csm`).")
     risk = {d.name: d.risk_direction for d in FEATURES}
     section("Coefficients",
             f"One final model on all {r['counts']['final_train_rows']:,} settled rows"
@@ -665,15 +685,19 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
                 *[f"| {m} | {v['links']:,} | {v['precision']:.3f} |"
                   f" {v['recall']:.3f} |" for m, v in r["identity"].items()])
     d = r["difficulty"]
-    beats = p["model"]["recall_at_k_arr"] > p["renewal_sort"]["recall_at_k_arr"]
+    latest = origins[-1]
+    beats = latest["recall_model"] > latest["recall_renewal_sort"]
     section("Acceptance gates",
-            *([f"- Oracle ROC-AUC {d['oracle_auc']:.3f} (band 0.80 to 0.92)."]
-              if "oracle_auc" in d else []),
+            *([f"- Oracle ROC-AUC {d['oracle_auc']:.3f} (band {GATES['oracle_auc'][0]:.2f}"
+               f" to {GATES['oracle_auc'][1]:.2f})."] if "oracle_auc" in d else []),
             f"- Best single feature: {d['max_single_feature']}, ROC-AUC"
-            f" {d['max_single_auc']:.3f} (at most 0.72).",
+            f" {d['max_single_auc']:.3f} (at most {GATES['max_single_auc']:.2f}).",
             f"- Full observable model, in sample: ROC-AUC {d['full_model_auc']:.3f} (at most"
-            " 0.86).",
-            f"- Model recall@K beats renewal sort: {'yes' if beats else 'no'}.",
+            f" {GATES['full_model_auc']:.2f}).",
+            f"- Model recall@K beats renewal sort on the latest origin"
+            f" ({_day(latest['origin'])}): {'yes' if beats else 'no'}"
+            f" ({_pct(latest['recall_model'])} against"
+            f" {_pct(latest['recall_renewal_sort'])}).",
             f"- Coefficient signs: {'all match' if not r['signs'] else ', '.join(r['signs'])}.",
             "", "Result: " + ("all gates pass." if not violations else "; ".join(violations) + "."))
     section("Known limits",

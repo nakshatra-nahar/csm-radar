@@ -1,7 +1,6 @@
 """How much honest signal each feature carries (Task 5b), and the design §3.6 difficulty
 numbers: the best single feature, the full observable model and the latent-health oracle."""
 
-from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -12,9 +11,8 @@ from sklearn.preprocessing import StandardScaler
 
 from radar import model, registry
 from radar.asof import Frames
-from radar.bootstrap import HISTORY_END
-from radar.labels import MATURITY, build_training_set, snapshot_grid
-from radar.tenants import TENANTS
+from radar.labels import build_training_set, training_grid
+from radar.sim.params import HISTORY_END
 
 COLUMNS = ["prevalence_nonzero", "missing_share", "single_auc", "coef", "sign_ok"]
 
@@ -22,9 +20,8 @@ COLUMNS = ["prevalence_nonzero", "missing_share", "single_auc", "coef", "sign_ok
 def training_set(frames: Frames, tenant: dict) -> pd.DataFrame:
     """Monday snapshots from 120 days after the last source connected until the last settled
     window before history_end (the Task 5 training population)."""
-    start = pd.Timestamp(max(TENANTS[tenant["slug"]].source_start.values()), tz="UTC")
-    grid = snapshot_grid(start + timedelta(days=120), HISTORY_END - MATURITY)
-    return build_training_set(frames, tenant, grid, HISTORY_END)
+    return build_training_set(frames, tenant, training_grid(tenant["slug"], HISTORY_END),
+                              HISTORY_END)
 
 
 def _auc(y: pd.Series, x: pd.Series, direction: int | None) -> float:

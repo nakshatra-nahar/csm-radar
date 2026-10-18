@@ -9,10 +9,12 @@ import pytest
 
 from radar import evaluate
 from radar.asof import Frames, load_frames
-from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
+from radar.bootstrap import replay_feed, seed_tenants_and_users
 from radar.db import Database
+from radar.labels import MATURITY
 from radar.registry import FEATURE_NAMES, rules_score
 from radar.sim import generate
+from radar.sim.params import HISTORY_END
 from radar.tenants import runtime_config, tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 
@@ -164,14 +166,12 @@ def test_headline_metrics_are_weekly_means():
 def test_acceptance_reports_each_violation():
     good = {"difficulty": {"oracle_auc": 0.85, "max_single_auc": 0.70,
                            "max_single_feature": "usage_drop", "full_model_auc": 0.80},
-            "policies": {"model": {"recall_at_k_arr": 0.5},
-                         "renewal_sort": {"recall_at_k_arr": 0.3}},
+            "counts": {"origins": [{"recall_model": 0.5, "recall_renewal_sort": 0.3}]},
             "signs": []}
     assert evaluate.acceptance(good) == []
     bad = {"difficulty": {"oracle_auc": 0.95, "max_single_auc": 0.75,
                           "max_single_feature": "usage_drop", "full_model_auc": 0.90},
-           "policies": {"model": {"recall_at_k_arr": 0.3},
-                        "renewal_sort": {"recall_at_k_arr": 0.3}},
+           "counts": {"origins": [{"recall_model": 0.3, "recall_renewal_sort": 0.3}]},
            "signs": ["usage_drop"]}
     assert len(evaluate.acceptance(bad)) == 5
 
@@ -216,6 +216,7 @@ def test_eval_computes_all_policies_and_metrics(eval_result):
     assert set(r["c_sensitivity"]) == {"0.1", "1.0", "10.0"}  # design §6
     assert r["c_sensitivity"]["1.0"] == pytest.approx(r["policies"]["model"]["recall_at_k_arr"])
     assert r["counts"]["origins"] and len(r["counts"]["origins"]) == 4
+    assert all(o["origin"] - o["train_to"] >= MATURITY for o in r["counts"]["origins"])
     assert all(o["train_decisions"] > 0 and o["test_rows"] > 0 for o in r["counts"]["origins"])
     assert {"year", "month"} <= set(r["reliability"])  # per Stripe billing interval
     assert all(len(s["bins"]) <= 10 for s in r["reliability"].values())
@@ -326,3 +327,44 @@ def test_lead_time_counts_only_flags_inside_the_label_window():
     lead = evaluate._lead_time(t)
     assert lead["flagged"] == 1 and lead["median_weeks"] == 10.0
     assert lead["median_weeks"] <= 90 / 7
+
+
+def test_training_rows_are_settled_and_labelled_only_from_what_arrived_by_the_origin(
+        monkeypatch):
+    """The rolling-origin leakage guard (design §7): a training snapshot T needs T +
+    MATURITY <= origin, and its label comes from frames cut at the origin, so a decision that
+    arrives after the origin trains as a 0."""
+    origin = pd.Timestamp("2026-04-20", tz="UTC")
+    settled, unsettled = origin - pd.Timedelta(days=203), origin - pd.Timedelta(days=105)
+    feats = pd.DataFrame({"eligible": True, "sources_connected": True,
+                          "decision_visible": False},
+                         index=pd.MultiIndex.from_tuples(
+                             [("a", settled), ("b", settled), ("a", unsettled)],
+                             names=["account_id", "as_of"]))
+    events = pd.DataFrame({"account_id": ["a", "b"],
+                           "decision_at": [settled + pd.Timedelta(days=30)] * 2,
+                           "available_at": [origin + pd.Timedelta(days=1),  # arrives late
+                                            settled + pd.Timedelta(days=31)]})
+    frames = Frames(events=events, links=events.iloc[:0], accounts=None, contacts=None,
+                    users=None)
+    def decided(f):  # churn_decisions' columns from the planted events that arrived
+        never = f.events["decision_at"] + pd.NaT
+        return f.events.assign(involuntary_at=never, merged=never)[
+            ["account_id", "decision_at", "involuntary_at", "merged"]]
+    monkeypatch.setattr(evaluate, "churn_decisions", decided)
+    train = evaluate._train_rows(feats, frames, origin)
+    assert train["label"].to_dict() == {("a", settled): 0, ("b", settled): 1}
+
+
+def test_recall_gate_is_on_the_latest_origin():
+    """Design §6: recall@K beats the renewal-date baseline on the latest origin, not only
+    pooled over all four."""
+    origins = [{"recall_model": 0.6, "recall_renewal_sort": 0.2}] * 3 + [
+        {"recall_model": 0.2, "recall_renewal_sort": 0.3}]
+    result = {"difficulty": {"max_single_auc": 0.6, "max_single_feature": "x",
+                             "full_model_auc": 0.7},
+              "signs": [], "counts": {"origins": origins}}
+    assert evaluate.acceptance(result) == [
+        "model recall@K does not beat the renewal-date sort on the latest origin"]
+    origins[-1] = {"recall_model": 0.4, "recall_renewal_sort": 0.3}
+    assert evaluate.acceptance(result) == []

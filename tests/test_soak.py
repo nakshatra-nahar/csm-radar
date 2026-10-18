@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from radar.bootstrap import HISTORY_END
 from radar.db import owner_connect
+from radar.sim.params import HISTORY_END
 from tests.conftest import WORKER_PASSWORD, world_database
 
 

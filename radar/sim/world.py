@@ -6,7 +6,7 @@ shock offsets, and churn decisions are drawn from health. Observables come later
 
 import itertools
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -43,7 +43,7 @@ from radar.sim.names import (
     sf_id,
     token,
 )
-from radar.sim.params import PARAMS
+from radar.sim.params import HISTORY_END, PARAMS
 from radar.sim.signals import emails, product_events, usage
 from radar.tenants import TENANTS, TenantSpec
 
@@ -342,7 +342,7 @@ def _depart_champions(spec: TenantSpec, accounts: list[Account], contacts: list[
 
 
 def simulate(slug: str, seed: int = 7, scale: float = 1.0, sim_end: date = date(2027, 4, 30),
-             history_end: datetime = datetime(2026, 10, 17, tzinfo=UTC)) -> World:
+             history_end: datetime = HISTORY_END) -> World:
     spec = TENANTS[slug]
     rng = tenant_rng(slug, seed)
     seq = itertools.count(10_000_000 * list(TENANTS).index(slug) + 1000)
