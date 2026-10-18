@@ -46,16 +46,19 @@ if either DSN is for a role that is a superuser, bypasses RLS or owns the tables
 
 ### A3. Generate the secrets
 
-Run this in the shell you will use for the rest of part A. The values stay in shell
-variables, so they do not end up in your shell history.
+Run this in the shell you will use for the rest of part A. The generated values never
+appear on screen. Type the passcode, the Neon owner URL and the Anthropic key at the `read -rs`
+prompts (input is not echoed) rather than in a literal `export` line, which your shell would
+save to its history. Leave the Anthropic key empty to use template briefs.
 
 ```sh
 export RADAR_WEB_PASSWORD="$(openssl rand -base64 24)"
 export RADAR_WORKER_PASSWORD="$(openssl rand -base64 24)"
 export RADAR_SECRET_KEY="$(openssl rand -hex 32)"
 export TICK_SECRET="$(openssl rand -hex 32)"
-export RADAR_DEMO_PASSCODE='<a passcode you can tell people>'
-export NEON_DIRECT_OWNER_URL='<the direct owner URL from A2.3>'
+printf 'Demo passcode: '; read -rs RADAR_DEMO_PASSCODE; echo; export RADAR_DEMO_PASSCODE
+printf 'Neon direct owner URL (A2.3): '; read -rs NEON_DIRECT_OWNER_URL; echo; export NEON_DIRECT_OWNER_URL
+printf 'Anthropic API key (or Enter): '; read -rs ANTHROPIC_API_KEY; echo  # not exported: A4 stays on templates
 export NEON_POOLED_HOST='<the -pooler host from A2.3>'
 ```
 
@@ -110,6 +113,8 @@ uv run radar push --to "$NEON_DIRECT_OWNER_URL" --pg-bin /opt/homebrew/opt/postg
 ```
 
 - Use the **direct** owner URL, not the pooled one: the restore is one long transaction.
+  `bootstrap`, `push` and `prune` all need a direct (non-pooled) owner connection: they
+  connect as the owner without honouring `RADAR_PGBOUNCER`, so a PgBouncer host breaks them.
 - `--pg-bin` must hold a `pg_dump` and `pg_restore` whose major version is at least the
   source server's (16) and at most the target's. Homebrew's default `postgresql` is 17, and
   `pg_restore` 17 writes `SET transaction_timeout`, which a PostgreSQL 16 server rejects.
@@ -135,7 +140,7 @@ secret RADAR_SECRET_KEY "$RADAR_SECRET_KEY"
 secret RADAR_DEMO_PASSCODE "$RADAR_DEMO_PASSCODE"
 secret TICK_SECRET "$TICK_SECRET"
 secret CRON_SECRET "$TICK_SECRET"   # Vercel cron sends this one; same value as TICK_SECRET
-secret ANTHROPIC_API_KEY '<your key, or skip this line for template briefs>'
+[ -n "$ANTHROPIC_API_KEY" ] && secret ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"  # from A3
 add FEED_SOURCE db                  # the rest of the feed is in the feed_buffer table
 add RADAR_PGBOUNCER 1
 add RADAR_ENV production            # HTTPS-only session cookie; role DSNs required
@@ -155,7 +160,9 @@ add RADAR_ENV production            # HTTPS-only session cookie; role DSNs requi
 | `RADAR_WEBHOOK_SECRETS` | optional; `<slug>-<n>:<secret>,...` to accept signed webhooks |
 
 In production the app refuses to start unless both role DSNs are set and each names host,
-port, dbname, user, password and sslmode. Do not point either at `DATABASE_URL`.
+port, dbname, user, password and sslmode, with sslmode `require`, `verify-ca` or
+`verify-full` (`disable`, `allow` and `prefer` are refused). Do not point either at
+`DATABASE_URL`.
 
 ### A7. Deploy
 
@@ -180,7 +187,9 @@ gh secret set RADAR_URL --body 'https://<your-project>.vercel.app'
 printf %s "$TICK_SECRET" | gh secret set TICK_SECRET
 ```
 
-`.github/workflows/tick.yml` then posts to `/internal/tick` every 15 minutes.
+`.github/workflows/tick.yml` then posts to `/internal/tick` every 15 minutes. Until
+`RADAR_URL` is set, each scheduled run logs a notice and exits successfully instead of
+failing.
 
 ### A9. Verify
 
@@ -263,4 +272,5 @@ On Railway or a similar host, run the same image as two services from one Postgr
 expanded once, so it cannot refer to `$PORT`) and `ROLE=worker`, with `RADAR_OWNER_DSN` (or the
 two role DSNs), the secrets above and `FEED_SOURCE=db`. Run `ROLE=bootstrap` once first, or
 bootstrap locally and `radar push` as in A4 and A5. If the host's Postgres sits behind
-PgBouncer in transaction mode, also set `RADAR_PGBOUNCER=1`.
+PgBouncer in transaction mode, also set `RADAR_PGBOUNCER=1` for `web` and `worker`, and give
+`bootstrap` (and any later `push` or `prune`) a direct owner connection instead (see A5).

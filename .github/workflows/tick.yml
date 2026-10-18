@@ -14,7 +14,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 6
     steps:
-      - run: >-
-          curl -fsS --max-time 290 -X POST
-          -H "Authorization: Bearer ${{ secrets.TICK_SECRET }}"
-          "${{ secrets.RADAR_URL }}/internal/tick"
+      - env:  # secrets reach the script as variables, never spliced into its text
+          RADAR_URL: ${{ secrets.RADAR_URL }}
+          TICK_SECRET: ${{ secrets.TICK_SECRET }}
+        run: |
+          if [ -z "$RADAR_URL" ]; then
+            echo "::notice::RADAR_URL and TICK_SECRET are not set yet (docs/deploy.md step A8); skipping the tick"
+            exit 0
+          fi
+          curl -fsS --max-time 290 -X POST -H "Authorization: Bearer $TICK_SECRET" "$RADAR_URL/internal/tick"

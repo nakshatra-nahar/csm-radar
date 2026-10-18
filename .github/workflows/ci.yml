@@ -23,11 +23,11 @@ jobs:
       # radar push tests need pg_dump/pg_restore 16 to match the server; without them they skip
       RADAR_TEST_PG_BIN: /usr/lib/postgresql/16/bin
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
         with:
           version: "0.9.25"
-      - run: uv sync --frozen --extra ml
+      - run: uv sync --locked --extra ml  # fails if uv.lock is stale against pyproject.toml
       - run: uv run ruff check .
       - name: pg_dump 16 is present (else the push tests would skip silently)
         run: '"$RADAR_TEST_PG_BIN/pg_dump" --version | grep -q " 16\."'
@@ -36,9 +36,9 @@ jobs:
   gitleaks:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0  # scan the full history, not just the last commit
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

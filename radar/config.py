@@ -9,6 +9,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 # libpq fills a parameter a DSN leaves out from PG* variables, which Vercel's Neon integration
 # sets to the owner's credentials (Ruling AU), so a role DSN must name every one itself.
 EXPLICIT = ("host", "port", "dbname", "user", "password")
+SECURE_SSLMODES = ("require", "verify-ca", "verify-full")  # disable/allow/prefer can be plaintext
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ def _explicit_dsn(name: str, dsn: str, production: bool) -> str:
     missing = [k for k in EXPLICIT + (("sslmode",) if production else ()) if not params.get(k)]
     if missing:
         raise ValueError(f"{name} must set {', '.join(missing)} itself")
+    if production and params["sslmode"] not in SECURE_SSLMODES:
+        raise ValueError(f"{name} sslmode must be one of {', '.join(SECURE_SSLMODES)}")
     return dsn
 
 

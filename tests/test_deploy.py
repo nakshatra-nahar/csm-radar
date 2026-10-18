@@ -90,7 +90,10 @@ def test_vercel_bundle_keeps_every_file_the_app_reads_at_runtime():
     assert [p for p in runtime if _excluded(p)] == []
     for path in ("data/feed/hearthline/stripe.jsonl", "eval/hearthline.json",
                  "tests/test_web.py", "scripts/screenshots.py", "docs/design.md",
-                 "docs/deploy.md", "docs/data-dictionary.md"):
+                 "docs/deploy.md", "docs/data-dictionary.md",
+                 # docs/[!m]* stops at "/": every new docs/ subdirectory needs its own
+                 # docs/<dir>/** entry in vercel.json excludeFiles and a case here
+                 "docs/research/sources.md", "docs/deck/radar.pdf", "docs/img/web.png"):
         assert _excluded(path), path
 
 

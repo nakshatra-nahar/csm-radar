@@ -77,3 +77,17 @@ def test_pgbouncer_setting_defaults_off(monkeypatch):
     assert load_settings().pgbouncer is False
     monkeypatch.setenv("RADAR_PGBOUNCER", "1")
     assert load_settings().pgbouncer is True
+
+
+def test_production_role_dsns_refuse_sslmodes_that_allow_plaintext(monkeypatch):
+    """disable/allow/prefer can all end up unencrypted; production takes only require or
+    stronger."""
+    monkeypatch.setenv("RADAR_ENV", "production")
+    monkeypatch.setenv("RADAR_WEB_DSN", POOLED)
+    for weak in ("disable", "allow", "prefer"):
+        monkeypatch.setenv("RADAR_WORKER_DSN", POOLED.replace("require", weak))
+        with pytest.raises(ValueError, match="RADAR_WORKER_DSN sslmode must be one of"):
+            load_settings()
+    for strong in ("require", "verify-ca", "verify-full"):
+        monkeypatch.setenv("RADAR_WORKER_DSN", POOLED.replace("require", strong))
+        assert f"sslmode={strong}" in load_settings().worker_dsn

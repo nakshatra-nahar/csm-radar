@@ -2,8 +2,7 @@
 # Secrets come from the environment or a .env file next to this one; the defaults suit a
 # local demo only. The db service alone is also the test database (`make db USE_DOCKER=1`).
 x-radar: &radar
-  build: .
-  image: radar  # built once, run as each service
+  image: radar  # built once (by bootstrap), run as each service
   environment: &radar-env
     RADAR_OWNER_DSN: postgresql://postgres:postgres@db:5432/radar
     RADAR_WEB_PASSWORD: ${RADAR_WEB_PASSWORD:-change-me-web}
@@ -32,6 +31,7 @@ services:
 
   bootstrap:  # one-shot: migrate, seed, replay, train, sweep; a re-run adds nothing
     <<: *radar
+    build: .  # the only service that builds; web and worker reuse its image
     environment:
       <<: *radar-env
       ROLE: bootstrap
@@ -44,6 +44,7 @@ services:
 
   web:
     <<: *radar
+    pull_policy: never  # "radar" is the local image bootstrap built, never a registry one
     environment:
       <<: *radar-env
       ROLE: web --host 0.0.0.0 --port 8000
@@ -62,6 +63,7 @@ services:
 
   worker:  # the long-lived worker: no tick schedule needed here
     <<: *radar
+    pull_policy: never
     environment:
       <<: *radar-env
       ROLE: worker

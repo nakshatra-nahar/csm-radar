@@ -3,7 +3,7 @@
   "functions": {
     "radar/web/asgi.py": {
       "maxDuration": 300,
-      "excludeFiles": "{data/**,eval/**,tests/**,scripts/**,docs/[!m]*}"
+      "excludeFiles": "{data/**,eval/**,tests/**,scripts/**,docs/[!m]*,docs/research/**,docs/deck/**,docs/img/**}"
     }
   },
   "crons": [{ "path": "/internal/tick", "schedule": "0 13 * * *" }]
