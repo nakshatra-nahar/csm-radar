@@ -16,7 +16,7 @@ from radar import clock, policy
 from radar.agent import handlers, jobs, worker
 from radar.bootstrap import _bootstrap_sweep, replay_feed, seed_tenants_and_users
 from radar.db import Database, owner_connect
-from radar.tenants import tenant_id
+from radar.tenants import runtime_config, tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
 
 T0 = datetime(2026, 10, 24, 12, tzinfo=UTC)  # a Saturday, 13:00 in London
@@ -354,6 +354,22 @@ def test_product_is_stale_after_the_monthly_batch_grace(last, now, stale):
     def at(s):
         return datetime.fromisoformat(s).replace(tzinfo=UTC)
     assert handlers.is_stale("product", at(last), at(now), {}) is stale
+
+
+def test_late_usage_batch_is_stale_though_track_events_keep_arriving(world):
+    """Segment track events share the 'product' source and arrive daily; freshness must
+    still catch a late monthly usage batch, so it reads the newest product.usage event."""
+    # the feed stops at T0 (Oct 24), so November's batch, due by Dec 6, never came
+    now = datetime(2026, 12, 7, tzinfo=UTC)
+    world.owner.execute("UPDATE source_status SET last_deliver_at = %s WHERE tenant_id = %s"
+                        " AND source = 'product'", (now - timedelta(hours=1), TALLY))
+    with world.db.tenant_tx(TALLY) as conn:
+        hours = runtime_config("tallyworks")["freshness_hours"]
+        handlers.check_freshness(conn, now, hours)
+    stale = rows(world.owner, "SELECT details FROM incidents WHERE kind = 'source_stale'"
+                 " AND source = 'product'")
+    assert len(stale) == 1
+    assert stale[0]["details"]["last_available_at"] < "2026-11-01"
 
 
 def test_feed_triggers_commit_with_their_batch(world, small_world_dir, monkeypatch):

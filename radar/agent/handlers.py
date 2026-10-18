@@ -111,8 +111,8 @@ def _expected_by(source: str, last: datetime | None, now: datetime,
 
 
 def is_stale(source: str, last: datetime | None, now: datetime, hours: dict) -> bool:
-    """Source freshness v1 (design §5.2, Ruling AH), on the latest available_at delivered;
-    `hours` is the tenant's config['freshness_hours']."""
+    """Source freshness v1 (design §5.2, Ruling AH), on the latest available_at delivered (for
+    product, of the usage batch); `hours` is the tenant's config['freshness_hours']."""
     if last is None:
         return True
     if source == "product":
@@ -126,6 +126,9 @@ def check_freshness(conn, now: datetime, hours: dict) -> None:
     for s in conn.execute("SELECT source, last_deliver_at FROM source_status"
                           " ORDER BY source").fetchall():
         source, last = s["source"], s["last_deliver_at"]
+        if source == "product":  # the monthly batch: daily Segment events share the source
+            last = conn.execute("SELECT max(available_at) AS at FROM events"
+                                " WHERE type = 'product.usage'").fetchone()["at"]
         if not is_stale(source, last, now, hours):
             conn.execute("UPDATE incidents SET closed_at = %s WHERE kind = 'source_stale'"
                          " AND source = %s AND closed_at IS NULL", (now, source))
