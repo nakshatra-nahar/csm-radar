@@ -32,10 +32,27 @@ class Settings:
     pgbouncer: bool  # PgBouncer in transaction mode (Neon pooled): no prepared statements
 
 
+DEV_SECRET_KEY, DEV_PASSCODE = "dev-only-secret-key", "radar-demo"
+MIN_SECRET_KEY = 32  # openssl rand -hex 32 gives 64
+
+
 def _parse_secrets(raw: str) -> dict[str, str]:
-    """'kid1:secret1,kid2:secret2' -> {kid: secret}. Secrets may contain ':'."""
-    pairs = (item.strip().split(":", 1) for item in raw.split(",") if item.strip())
-    return {kid: secret for kid, secret in pairs}
+    """'kid1:secret1,kid2:secret2' -> {kid: secret}. Secrets may contain ':'. An empty kid or
+    secret is refused: anyone can sign with an empty key."""
+    out = {}
+    for item in filter(None, (i.strip() for i in raw.split(","))):
+        kid, _, secret = item.partition(":")
+        if not kid.strip() or not secret.strip():
+            raise ValueError(f"RADAR_WEBHOOK_SECRETS entry {kid or item!r} needs kid:secret")
+        out[kid.strip()] = secret
+    return out
+
+
+def _production_secret(name: str, value: str, dev: str, min_len: int = 1) -> None:
+    """Refuse a value that is empty, the public dev default or shorter than min_len."""
+    if not value or value == dev or len(value) < min_len:
+        raise ValueError(f"{name} must be set in production (not the dev default,"
+                         f" at least {min_len} characters)")
 
 
 def _explicit_dsn(name: str, dsn: str, production: bool) -> str:
@@ -67,14 +84,19 @@ def load_settings() -> Settings:
             raise ValueError(f"{name} is required in production")
         dsns[name] = _explicit_dsn(name, env(name) or make_conninfo(
             owner_dsn, user=role, password=password), production)
+    secret_key = env("RADAR_SECRET_KEY", DEV_SECRET_KEY)
+    passcode = env("RADAR_DEMO_PASSCODE", DEV_PASSCODE)
+    if production:  # the dev defaults are public: a cookie signed with them logs in as anyone
+        _production_secret("RADAR_SECRET_KEY", secret_key, DEV_SECRET_KEY, MIN_SECRET_KEY)
+        _production_secret("RADAR_DEMO_PASSCODE", passcode, DEV_PASSCODE)
     return Settings(
         owner_dsn=owner_dsn,
         web_dsn=dsns["RADAR_WEB_DSN"],
         worker_dsn=dsns["RADAR_WORKER_DSN"],
         web_password=web_password,
         worker_password=worker_password,
-        secret_key=env("RADAR_SECRET_KEY", "dev-only-secret-key"),
-        demo_passcode=env("RADAR_DEMO_PASSCODE", "radar-demo"),
+        secret_key=secret_key,
+        demo_passcode=passcode,
         anthropic_api_key=env("ANTHROPIC_API_KEY") or None,
         llm_model=env("RADAR_LLM_MODEL", "claude-haiku-5-5"),
         data_dir=Path(env("RADAR_DATA_DIR", "data")),

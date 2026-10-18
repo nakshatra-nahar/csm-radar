@@ -27,6 +27,7 @@ def test_tick_secret_reads_either_env_name_and_budget_defaults(monkeypatch):
     monkeypatch.setenv("RADAR_ENV", "production")
     monkeypatch.setenv("RADAR_WEB_DSN", POOLED)
     monkeypatch.setenv("RADAR_WORKER_DSN", POOLED)
+    _production_secrets(monkeypatch)
     s = load_settings()
     assert (s.tick_secret, s.tick_budget_s, s.production) == ("t1", 30.0, True)
 
@@ -84,6 +85,7 @@ def test_production_role_dsns_refuse_sslmodes_that_allow_plaintext(monkeypatch):
     stronger."""
     monkeypatch.setenv("RADAR_ENV", "production")
     monkeypatch.setenv("RADAR_WEB_DSN", POOLED)
+    _production_secrets(monkeypatch)
     for weak in ("disable", "allow", "prefer"):
         monkeypatch.setenv("RADAR_WORKER_DSN", POOLED.replace("require", weak))
         with pytest.raises(ValueError, match="RADAR_WORKER_DSN sslmode must be one of"):
@@ -91,3 +93,39 @@ def test_production_role_dsns_refuse_sslmodes_that_allow_plaintext(monkeypatch):
     for strong in ("require", "verify-ca", "verify-full"):
         monkeypatch.setenv("RADAR_WORKER_DSN", POOLED.replace("require", strong))
         assert f"sslmode={strong}" in load_settings().worker_dsn
+
+
+def _production_secrets(monkeypatch):
+    monkeypatch.setenv("RADAR_SECRET_KEY", "k" * 64)
+    monkeypatch.setenv("RADAR_DEMO_PASSCODE", "a real passcode")
+
+
+def test_production_refuses_the_dev_session_key_and_passcode(monkeypatch):
+    """The dev defaults are in this public repo: a cookie signed with them would skip the
+    passcode and log in as any user, so production must set both itself."""
+    monkeypatch.setenv("RADAR_ENV", "production")
+    monkeypatch.setenv("RADAR_WEB_DSN", POOLED)
+    monkeypatch.setenv("RADAR_WORKER_DSN", POOLED)
+    _production_secrets(monkeypatch)
+    for key in ("", "dev-only-secret-key", "change-me", "short" * 6):
+        monkeypatch.setenv("RADAR_SECRET_KEY", key)
+        with pytest.raises(ValueError, match="RADAR_SECRET_KEY"):
+            load_settings()
+    monkeypatch.delenv("RADAR_SECRET_KEY")
+    with pytest.raises(ValueError, match="RADAR_SECRET_KEY"):
+        load_settings()
+    _production_secrets(monkeypatch)
+    for passcode in ("", "radar-demo"):
+        monkeypatch.setenv("RADAR_DEMO_PASSCODE", passcode)
+        with pytest.raises(ValueError, match="RADAR_DEMO_PASSCODE"):
+            load_settings()
+    _production_secrets(monkeypatch)
+    assert load_settings().secret_key == "k" * 64
+
+
+def test_webhook_secrets_refuse_empty_or_malformed_entries(monkeypatch):
+    """An empty key would accept a webhook anyone can sign."""
+    for raw in ("hearthline-1:", ":secret", "hearthline-1", "k1:s1,k2:"):
+        monkeypatch.setenv("RADAR_WEBHOOK_SECRETS", raw)
+        with pytest.raises(ValueError, match="RADAR_WEBHOOK_SECRETS"):
+            load_settings()
