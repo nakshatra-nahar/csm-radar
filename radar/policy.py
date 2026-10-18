@@ -19,10 +19,6 @@ MUST_ACT = list(RULE_PLAYS)
 SOURCE_PLAYS = {"product": "value_review", "zendesk": "support_escalation",
                 "gmail": "exec_check_in", "billing": "value_review"}
 NO_SIGNAL_PLAY = "exec_check_in"
-# kitewire has no model: its band reads rules_score points; the default for a config that
-# predates band_rules
-RULES_BAND = {"red": 3.0, "yellow": 1.5}
-MIN_SLOT_LIFT = 1.0  # the default for a config that predates min_slot_lift
 LIFT_P = 0.10  # a suppression ends when p rises this much (absolute) over p_at_dismiss
 CHECK_INS = 2
 CHECK_IN_DAYS = 90
@@ -50,7 +46,7 @@ def band(p: float | None, lift: float | None, open_must_act: bool, coverage_ok: 
     if not eligible:
         return "not_in_window"
     value, cut = ((lift, cfg["band_lift"]) if p is not None
-                  else (rules_score, cfg.get("band_rules", RULES_BAND)))
+                  else (rules_score, cfg["band_rules"]))
     return "red" if value >= cut["red"] else "yellow" if value >= cut["yellow"] else "green"
 
 
@@ -73,7 +69,7 @@ def slot_floor(keys: pd.Series, cfg: dict) -> float:
     """Ruling AZ: capacity is a cap, not a quota. The least ranking key an account needs to
     fill a model slot: min_slot_lift x the tenant's mean key over eligible accounts at the
     run. Monotone in the key, so the floor only shortens a book's list, never reorders it."""
-    return cfg.get("min_slot_lift", MIN_SLOT_LIFT) * keys.mean()
+    return cfg["min_slot_lift"] * keys.mean()
 
 
 def choose_play(kind: str, contributions: dict[str, float]) -> str:

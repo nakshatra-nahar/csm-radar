@@ -10,7 +10,7 @@ import pandas as pd
 
 from radar import clock, model, policy, registry, scoring
 from radar.agent import brief
-from radar.agent.evidence import EXACT_METHODS, describe
+from radar.agent.evidence import EXACT_METHODS, describe, money
 
 TIMELINE_ITEMS = 40
 DRIVER_FLOOR = 0.1  # log-odds: a smaller behavioural term does not explain a model slot
@@ -95,7 +95,7 @@ def driver(row: dict, currency: str) -> str | None:
                 f" ({c:+.2f})")
     at_risk = row.get("expected_arr_at_risk_minor")
     return None if at_risk is None else (
-        f"large account: expected ARR at risk {currency} {at_risk / 100:,.0f}")
+        f"large account: expected ARR at risk {money(at_risk, currency, 0)}")
 
 
 def book(conn, band: str | None) -> list[dict]:

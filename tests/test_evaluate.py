@@ -47,7 +47,7 @@ def test_topk_by_book_respects_k_and_owner():
 
 
 def test_topk_by_book_leaves_slots_empty_below_the_floor():
-    """Ruling AP, as served: a row below the slot floor never fills a top-K slot, even in a
+    """Ruling AZ, as served: a row below the slot floor never fills a top-K slot, even in a
     book with room for it."""
     T = pd.Timestamp("2026-01-05", tz="UTC")
     df = pd.DataFrame({"as_of": [T] * 3, "owner_user_id": ["a"] * 3,

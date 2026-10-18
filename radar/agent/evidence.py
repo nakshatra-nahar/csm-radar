@@ -65,8 +65,9 @@ def _num(v) -> str:
     return "missing" if v is None else f"{v:.2f}" if isinstance(v, float) else str(v)
 
 
-def _money(minor, currency: str) -> str:
-    return "unknown" if minor is None else f"{currency} {minor / 100:,.2f}"
+def money(minor, currency: str, places: int = 2) -> str:
+    """Minor units as '<currency> 1,234.56' (places=0 for whole units, as the pages show)."""
+    return "unknown" if minor is None else f"{currency} {minor / 100:,.{places}f}"
 
 
 def _ticket(e: dict) -> str:
@@ -80,7 +81,7 @@ def _label(e: dict, currency: str) -> tuple[str, str]:
     if t == "billing.invoice":
         attempt = a.get("attempt_count")
         retry = f", payment attempt {attempt}" if status != "paid" and attempt else ""
-        return f"Invoice {status or 'updated'}", f"{_money(e['amount_minor'], currency)}{retry}"
+        return f"Invoice {status or 'updated'}", f"{money(e['amount_minor'], currency)}{retry}"
     if t == "billing.subscription":
         if a.get("cancel_at_period_end"):
             return "Subscription set to cancel at period end", ""
@@ -124,7 +125,7 @@ def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[t
     """(source, kind, display) for the account, its score, what changed and the top
     behavioural contributions."""
     term_end = ((score.get("context") or {}).get("term_end") or "unknown")[:10]
-    out = [("crm", "account", f"{name}: ARR {_money(score.get('arr_minor'), currency)},"
+    out = [("crm", "account", f"{name}: ARR {money(score.get('arr_minor'), currency)},"
             f" term ends {term_end}")]
     if not score:
         return out
