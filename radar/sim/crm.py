@@ -74,7 +74,7 @@ def _initial_load(c: CrmChange, at: datetime) -> CrmChange | None:
 
 def _opportunities(world: World, a: Account, rows: list[dict], rng: np.random.Generator,
                    seq) -> list[CrmChange]:
-    """One renewal opportunity per decided term: open, negotiate, close won/lost."""
+    """One renewal opportunity per decided term: open, then close won/lost."""
     tz, slug, out = world.spec.timezone, world.slug, []
     pool = PARAMS["loss_reasons"][slug] + list(PARAMS["shock_reasons"][slug].values())
 

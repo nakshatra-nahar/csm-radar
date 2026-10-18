@@ -26,7 +26,7 @@ EMAIL_CAP = 120.0
 
 
 class Snapshot:
-    """What could be known at T. ev/state results are memoised; so is anything via get()."""
+    """What could be known at T. ev() and get() results are memoised; state() is not."""
 
     def __init__(self, frames: Frames, tenant: dict, T: datetime, hindsight: bool = False,
                  by_type: dict | None = None):
