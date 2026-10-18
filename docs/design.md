@@ -68,7 +68,7 @@ Each account has a latent health `h_t`, simulated week by week from its start. W
 - Churn decisions:
   - Contract accounts decide at `term_end - notice`, with notice ~ U[30, 75] days, `P(churn) = sigmoid(alpha + beta * mean(h over prior 8 weeks))`.
   - Month-to-month accounts have a weekly decision hazard `sigmoid(alpha_m + beta_m * h_t)`.
-  - Unforecastable churn (acquired, business closed, team dissolved, brokerage switch) is drawn independently of h and makes up ~20% of churn.
+  - Unforecastable churn (acquired, business closed, team dissolved, brokerage switch) is drawn independently of h. In the full-scale seed-7 world it is 18% of voluntary churn decisions for hearthline, 11% for tallyworks and 15% for kitewire (measured from the truth tables).
   - Targets: hearthline ~13% annual voluntary logo churn; tallyworks ~24% for month-to-month and ~12% for annual. Exact alpha/beta are tuned by the acceptance test (3.6).
 - How a decision shows up:
   - 70%: Stripe `cancel_at_period_end=true` (some use `cancel_at`), then the SF renewal opportunity goes Closed Lost with a loss reason some days later.

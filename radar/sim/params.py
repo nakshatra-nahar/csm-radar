@@ -60,7 +60,8 @@ PARAMS: dict = {
         "kitewire": {"annual": (-3.45, -2.8), "month_to_month": (-6.5, -2.0)},
     },
     "notice_days": (30, 75),
-    # annual rate of churn drawn independently of h (about 20% of voluntary churn)
+    # annual rate of churn drawn independently of h; measured share of voluntary churn
+    # decisions at seed 7: hearthline 18%, tallyworks 11%, kitewire 15%
     "unforecastable": {"rate": {"hearthline": 0.026, "tallyworks": 0.03, "kitewire": 0.05},
                        "causes": ["acquired", "business_closed", "team_dissolved",
                                   "brokerage_switch"]},
