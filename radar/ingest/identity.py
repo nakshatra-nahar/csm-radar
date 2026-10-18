@@ -140,19 +140,17 @@ def quarantine(conn, raw_record_id: int | None, source: str, account_ref: str | 
         (raw_record_id, source, account_ref, reason, Jsonb(details), available_at))
 
 
-def retry_quarantine(conn, tenant_id, available_at: datetime,
-                     keys: list[str] | None = None) -> int:
+def retry_quarantine(conn, tenant_id, available_at: datetime, keys: list[str]) -> int:
     """Re-resolve open identity quarantine; returns the number of refs resolved.
 
     `keys` (sf ids, domains, emails of the SF rows that just arrived) limits the retry to refs
     those rows could resolve, so a nightly batch does not re-try every open ref.
     """
-    where = " AND details->'keys' ?| %s" if keys is not None else ""
     refs = conn.execute(
         "SELECT DISTINCT ON (account_ref) source, account_ref, details->'hints' AS hints"
         " FROM quarantine WHERE tenant_id = %s AND resolved_at IS NULL"
-        " AND account_ref IS NOT NULL AND reason = ANY(%s)" + where +
+        " AND account_ref IS NOT NULL AND reason = ANY(%s) AND details->'keys' ?| %s"
         " ORDER BY account_ref, details->'hints' = '{}'::jsonb, id",
-        (tenant_id, IDENTITY_REASONS, *([keys] if keys is not None else []))).fetchall()
+        (tenant_id, IDENTITY_REASONS, keys)).fetchall()
     return sum(resolve_ref(conn, tenant_id, r["source"], r["account_ref"], r["hints"] or {},
                            available_at)[0] is not None for r in refs)

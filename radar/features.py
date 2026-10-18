@@ -429,15 +429,12 @@ def _one(s: Snapshot) -> pd.DataFrame:
 
 
 def compute_features(frames: Frames, tenant: dict, as_of: list[datetime],
-                     account_ids: list | None = None, hindsight: bool = False) -> pd.DataFrame:
-    """Features (registry order) and context per (account_id, as_of). The tenant median in
-    usage_drop is over every account, whatever account_ids selects."""
+                     hindsight: bool = False) -> pd.DataFrame:
+    """Features (registry order) and context per (account_id, as_of)."""
     by_type = split(frames)
     out = []
     for T in as_of:
         df = _one(Snapshot(frames, tenant, T, hindsight, by_type))
-        if account_ids is not None:
-            df = df[df.index.isin(account_ids)]
         out.append(df.assign(as_of=pd.Timestamp(T)).set_index("as_of", append=True))
     return pd.concat(out)
 

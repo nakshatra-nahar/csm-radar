@@ -88,10 +88,9 @@ def visible(df: pd.DataFrame, T: datetime, hindsight: bool = False) -> pd.DataFr
     return df[mask]
 
 
-def latest(df: pd.DataFrame, T: datetime, key: str = "entity_id",
-           hindsight: bool = False) -> pd.DataFrame:
-    """Each entity's latest visible version (df sorted by key, occurred_at, version_key)."""
-    return visible(df, T, hindsight).drop_duplicates(key, keep="last")
+def latest(df: pd.DataFrame, T: datetime) -> pd.DataFrame:
+    """Each entity's latest visible version (df sorted by entity_id, occurred_at, version_key)."""
+    return visible(df, T).drop_duplicates("entity_id", keep="last")
 
 
 def resolver(links: pd.DataFrame, T: datetime | None) -> tuple[pd.Series, pd.Series]:
