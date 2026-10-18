@@ -25,17 +25,21 @@ Every command below runs from the repository root. Values in `<angle brackets>` 
 1. Link the project. Either run `vercel link` in the repository root and answer the prompts,
    or in the Vercel dashboard choose **Add New → Project** and import the GitHub repository.
    Vercel finds the app through `[tool.vercel] entrypoint` in `pyproject.toml`.
-2. In the project, open **Storage → Create Database**, pick **Neon** from the Marketplace,
-   choose the **Free** plan and the region **AWS us-east-1** (next to Vercel's default
-   function region, iad1). Connect it to the project. Pick Postgres 16 if the dialog offers a
-   version; 17 also works.
+2. Create the Neon database in AWS us-east-1 (next to Vercel's default function region,
+   iad1). Either use **Storage → Create Database → Neon** (Free) in the Vercel project, or
+   create a free organisation in the Neon console and run
+   `npx neonctl projects create --name csm-radar --org-id <org> --region-id aws-us-east-1 --pg-version 16`.
+   The live demo used `neonctl`: projects in a Vercel-managed organisation cannot be changed
+   with it. Either way a free project is capped at **512 MB** (`SHOW neon.max_cluster_size`),
+   although Neon's pricing page lists 1 GB, so A4 loads two of the three tenants.
 3. Open the database in the Neon console (**Storage → your database → Open in Neon**) and
    click **Connect**. Copy two connection strings for the `neondb_owner` role and the
    `neondb` database:
    - with **Connection pooling off**: the direct owner URL, host `ep-<id>.us-east-1.aws.neon.tech`;
    - with **Connection pooling on**: note its host, `ep-<id>-pooler.us-east-1.aws.neon.tech`.
-4. In the Neon console, open **Branches → production → Compute → Edit** and set autoscaling
-   to a minimum of 0.25 CU and a maximum of 0.5 CU (see "Compute budget" below).
+4. Keep the compute at a fixed 0.25 CU, the Free default (**Branches → production → Compute**
+   in the Neon console). It spends compute-hours slowest, and the heavy work runs in Python on
+   Vercel, not in Postgres (see "Compute budget" below).
 
 The integration also adds `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `PG*` and `POSTGRES_*`
 variables to the Vercel project. They carry the owner's credentials, and Radar never reads
@@ -100,7 +104,7 @@ If you already run PostgreSQL 16 on port 54329 (the test database), skip to step
 
    ```sh
    uv sync --extra ml
-   uv run radar bootstrap
+   uv run radar bootstrap --tenants hearthline,kitewire   # fits a free 512 MB project
    ```
 
    The two role passwords from A3 must be exported when you run this: `migrate` gives the
@@ -201,10 +205,10 @@ failing.
 
 ### A10. Operations
 
-**Neon storage.** The Free plan holds 1 GB. The bootstrap measured about 584 MB, and the database
-grows about 5.4 MB a day (4.6 MB of it score history; docs/measurements.md). Check the size with
+**Neon storage.** A free project holds 512 MB. The two-tenant bootstrap is about 369 MB on Neon,
+and it grows about 3 MB a day, mostly score history (docs/measurements.md). Check the size with
 `psql "$NEON_DIRECT_OWNER_URL" -c "SELECT pg_size_pretty(pg_database_size('neondb'))"`.
-When it passes about 800 MB, prune old score runs:
+When it passes about 450 MB, prune old score runs:
 
 ```sh
 RADAR_OWNER_DSN="$NEON_DIRECT_OWNER_URL" uv run radar prune --older-than-days 35
@@ -216,8 +220,8 @@ lines are already deleted from `feed_buffer`, so the buffer holds only what is s
 
 **Compute budget.** The Free plan allows 100 CU-hours a month. Neon suspends the compute 5
 minutes after the last query, so each 15-minute tick keeps it awake for about 5 to 6
-minutes: about 65 to 70 CU-hours a month at 0.25 CU. Page views add to that. Keep autoscaling
-capped at 0.25 to 0.5 CU. If usage nears the allowance (Neon console → **Usage**), change the
+minutes: about 65 to 70 CU-hours a month at 0.25 CU. Page views add to that. Keep the compute at
+a fixed 0.25 CU. If usage nears the allowance (Neon console → **Usage**), change the
 schedule in `.github/workflows/tick.yml` to `*/30 * * * *`.
 
 **GitHub schedules.** GitHub disables scheduled workflows in a public repository after 60

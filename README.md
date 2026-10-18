@@ -62,7 +62,12 @@ argument is in the one-page brief, [docs/brief.md](docs/brief.md), written befor
 
 ## Live demo
 
-`<LIVE_URL>`
+**https://csm-radar-six.vercel.app**
+
+The live demo runs two of the three tenants, Hearthline and Kitewire. A free Neon project
+holds 512 MB and the full three-tenant world is about 584 MB, so Tallyworks runs locally
+(`radar bootstrap`); its evaluation is in [docs/model-card-tallyworks.md](docs/model-card-tallyworks.md).
+A GitHub Actions schedule runs the agent every 15 minutes.
 
 1. Open the URL and enter the demo passcode. The passcode comes with the submission. It is
    not in this repository.
@@ -73,7 +78,7 @@ argument is in the one-page brief, [docs/brief.md](docs/brief.md), written befor
 | Hearthline | real-estate team platform (USD) | CSM | Susan Anderson |
 | | | manager | Carlos Garcia |
 | | | admin | Mary Moore |
-| Tallyworks | SMB accounting (GBP) | CSM | Arjun Robinson |
+| Tallyworks (local only) | SMB accounting (GBP) | CSM | Arjun Robinson |
 | | | manager | Patricia Thomas |
 | | | admin | Karen Young |
 | Kitewire | developer tooling, new this year, no model yet (USD) | CSM | John Green |
@@ -308,7 +313,7 @@ build machine's disk. Every number is from
 
 | order | what breaks | measured | fix |
 |---|---|---|---|
-| 1 | Neon Free storage (1 GB), at about 1.7x | 584.4 MB after bootstrap at 1x; about 5.4 MB a day of growth, 4.6 MB of it score rows; about 5.7 GB at 10x | run `radar prune` on a schedule; drop `feed_buffer` once delivered; at 10x a paid tier and monthly partitions of `raw_records` and `events` |
+| 1 | Neon Free storage (512 MB per project), already at 1x | 584.4 MB after bootstrap at 1x, so the live demo holds two of three tenants (369 MB); about 5.4 MB a day of growth, 4.6 MB of it score rows; about 5.7 GB at 10x | run `radar prune` on a schedule; drop `feed_buffer` once delivered; at 10x a paid tier and monthly partitions of `raw_records` and `events` |
 | 2 | Worker memory on Vercel (2 GB on Hobby), at about 2.9x hearthline | `load_frames` peaks at 5.0 KB per event (780 MiB for hearthline's 139,487 events); about 6,900 MiB at 10x | read events straight into columns (the DataFrame itself is 0.6 KB per event), select only rows visible at T, scope `evaluate_rules` to its account |
 | 3 | A job that starts late in a tick | the tick budget is 240 s inside a 300 s function, so a late job gets at most 60 s | pass the deadline into `tick()` and skip a job whose recent p95 exceeds the time left |
 | 4 | Rule checks | 262 checks a week at 0.95 s each at 1x; about 6.9 of the 44.8 worker hours a week at 10x | the same as row 2 |

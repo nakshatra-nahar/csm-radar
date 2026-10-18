@@ -64,8 +64,9 @@ The replay rate falls as the tenant grows: hearthline ingests at about half tall
 
 ## Database size and Neon headroom
 
-`pg_database_size('radar_full')` after the bootstrap: **584,449,047 bytes (557 MiB)**. Neon
-Free allows 1 GB, so there is about 416 MB (decimal) of headroom. The figures below are
+`pg_database_size('radar_full')` after the bootstrap: **584,449,047 bytes (557 MiB)**. Neon's
+pricing page lists 1 GB for Free, but a free project is capped at 512 MB (see Live
+deployment), so the live demo holds two of the three tenants. The figures below are
 `pg_total_relation_size` (table, indexes and TOAST), in MiB like every size table on this
 page. The prose gives decimal MB where it says so.
 
@@ -88,7 +89,7 @@ Per tenant (each table's bytes split by its share of rows): hearthline 326.9 MiB
 
 `account_scores` costs 1,446 bytes per row (57,819,136 bytes / 39,980 rows). One daily sweep
 writes a row per active account: 3,157 rows, about 4.4 MiB (4.6 MB) a day for the three tenants.
-Without `radar prune`, a year of daily sweeps adds about 1.7 GB. That is more than Neon Free's 1 GB,
+Without `radar prune`, a year of daily sweeps adds about 1.7 GB. That is more than Neon Free's 512 MB,
 so a deployment runs `radar prune` (docs/deploy.md, Ruling AM).
 
 Local WAL reached about 656 MB during the bootstrap (max_wal_size 1 GB). WAL is not part of the
@@ -304,8 +305,8 @@ Jobs (all done; **0 dead** in the whole jobs table):
   new briefs.
 - **DB growth:** 584.4 MB → 622.3 MB (`pg_database_size`, decimal MB), +37.8 MB in 7 days.
   Per simulated day: +5.3, +6.4, +5.6, +5.1, +5.3, +5.3, +5.0 MB. About 4.6 MB a day is the
-  sweep's `account_scores` rows. At this rate, without pruning, the database reaches Neon Free's
-  1 GB about 77 days after bootstrap.
+  sweep's `account_scores` rows. At this rate, without pruning, the three-tenant database is past Neon Free's
+  512 MB cap from the start (see Live deployment).
 
 ## 10x
 
@@ -423,16 +424,16 @@ This is a projection, because no 10x world was loaded into Postgres:
 | kitewire | 25.0 MiB | 9.80 | 245 MiB |
 | total | 546.7 MiB | | 5,456 MiB (5.7 GB) |
 
-That is 5.7 times Neon Free's 1 GB. The 1x database (584.4 MB) already uses 58% of it.
+That is 11 times Neon Free's 512 MB cap. The 1x database (584.4 MB) already exceeds it.
 
 ### What breaks first at 10x
 
 From the measurements above, in the order they break as the world grows.
 
-1. **Neon Free storage (1 GB) breaks at about 1.7x.** The bootstrapped database is 584.4 MB at
-   1x and grows with records, so it passes 1 GB at 1.71x and reaches about 5.7 GB at 10x. At 1x
-   it already fills 1 GB about 77 days after bootstrap if nobody prunes (5.4 MB a day, 4.6 MB of
-   it score rows). Fix: run `radar prune` on a schedule; drop `feed_buffer` (43 MiB, demo only)
+1. **Neon Free storage (512 MB per project) breaks already at 1x.** The three-tenant database
+   is 584.4 MB and reaches about 5.7 GB at 10x, so the live demo holds two tenants (369 MB on
+   Neon). Those reach 512 MB about 45 days after bootstrap if nobody prunes (about 3 MB a day,
+   mostly score rows). Fix: run `radar prune` on a schedule; drop `feed_buffer` (43 MiB, demo only)
    once the feed is delivered; at 10x, move to a paid tier and partition `raw_records` and
    `events` by month, keeping old months in cold storage.
 2. **Worker memory on Vercel breaks at about 2.9x hearthline.** A function gets 2 GB on Hobby
@@ -506,3 +507,18 @@ GitHub Actions tick and Vercel's daily cron), so a tenant's day is at most 200,0
 |---|---|---|---|
 | claude-haiku-5-5 (default, $0.50 per M output) | $0.13 | $0.40 | $11.88 |
 | claude-sonnet-5-5 ($10 per M output) | $2.64 | $7.92 | $237.60 |
+
+## Live deployment
+
+Measured on 2026-10-18 while deploying to Vercel (Hobby) and Neon (Free, AWS us-east-1,
+Postgres 16).
+
+- Neon caps a free project at **512 MB**: `SHOW neon.max_cluster_size` returns `512MB`, both for
+  a database created through the Vercel Marketplace and for one created with `neonctl` in a
+  Neon-billed organisation, although Neon's pricing page lists 1 GB. The first three-tenant push
+  stopped at that limit.
+- So the live demo holds two tenants. `radar bootstrap --tenants hearthline,kitewire` took 82 s
+  and gave a 361 MB local database (147,593 records ingested, 37,037 buffered for later
+  delivery, 181 jobs). `radar push` copied it in 126 s; Neon reports 369 MB.
+- `vercel deploy --prod` took 40 s. `/healthz` answered in 0.8 s.
+- The first tick from GitHub Actions ran 2 jobs in 0.4 s.

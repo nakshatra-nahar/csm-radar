@@ -521,7 +521,9 @@ build was run are left out.
 - **Decision.** The web app is one Vercel Python function. A GitHub Actions schedule posts
   to `/internal/tick` every 15 minutes with a bearer secret; the tick runs the worker for up
   to 240 s of a 300 s function. A daily Vercel cron calls the same endpoint as a backstop.
-  Postgres is Neon Free (1 GB storage, 100 CU-hours a month, checked 2026-10-18). Docker
+  Postgres is Neon Free (100 CU-hours a month; a project is capped at 512 MB, measured at
+  deploy, although the pricing page lists 1 GB), so the live demo holds two of the three
+  tenants. Docker
   Compose, with a long-lived worker, is the always-on alternative.
 - **Alternatives.** Railway Hobby (the design estimated about $8 a month) with an always-on worker; Vercel
   Pro for per-minute cron.
@@ -560,17 +562,18 @@ build was run are left out.
 - **Code.** `radar/ops.py` (`push`);
   `tests/test_bootstrap.py::test_push_copies_every_row_once_and_refuses_a_loaded_target`.
 
-### Storage stays inside 1 GB by pruning (Ruling AM)
+### Storage stays inside Neon's 512 MB: two tenants live, plus pruning (Ruling AM)
 
-- **Context.** The bootstrapped database is 584.4 MB, and daily score rows add about 4.6 MB a
-  day.
-- **Decision.** `radar prune --older-than-days N` (owner only) deletes old score runs and
+- **Context.** The three-tenant database is 584.4 MB, a free Neon project holds 512 MB, and
+  daily score rows add about 4.6 MB a day for three tenants.
+- **Decision.** The live demo bootstraps two tenants (`radar bootstrap --tenants
+  hearthline,kitewire`, 369 MB on Neon); Tallyworks runs locally. `radar prune --older-than-days N` (owner only) deletes old score runs and
   their rows, keeping the latest done run of each kind, every run a list was frozen from, and
   the Monday runs that history reads. One audit row records it.
 - **Alternatives.** A paid tier; partitions with cold storage (the 10x answer).
 - **Why.** Score rows stay append-only for the app; deletion is a separate, owner-only act.
-- **Cost if wrong.** Without pruning, the database reaches 1 GB about 77 days after
-  bootstrap.
+- **Cost if wrong.** Without pruning, the two-tenant database reaches 512 MB about 45 days
+  after bootstrap.
 - **Code.** `radar/ops.py` (`prune`);
   `tests/test_bootstrap.py::test_prune_keeps_frozen_latest_and_monday_runs_per_tenant`.
 
