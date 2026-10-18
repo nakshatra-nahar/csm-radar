@@ -245,20 +245,24 @@ SELECTORS = {"usage_drop": _usage, "seat_utilization": _usage,
              "seat_change_180d": _seat_change, "not_live_after_30d": _contract_start}
 
 
-def _feature_events(conn, account_id, score: dict) -> list[tuple[dict, str]]:
+def _feature_events(conn, account_id, score: dict, now) -> list[tuple[dict, str]]:
     """The events behind the score's top behavioural contributions, as they stood at its run's
-    as_of: at most PER_FEATURE per feature and FEATURE_ITEMS in all, by contribution."""
+    as_of: at most PER_FEATURE per feature and FEATURE_ITEMS in all, by contribution. Each
+    row's method and link_account are the link usable now (Ruling AF), as for case events."""
     as_of = score["as_of"]
     # shortcut: links resolve to this account only, not through merges; add asof.resolver's
     # merge chain if merged accounts need their losers' events shown.
     rows = conn.execute(
-        "SELECT e.*, l.method, l.account_id AS link_account," + asof.ATTRS +
-        " FROM events e JOIN LATERAL (SELECT method, account_id FROM identity_links l"
+        "SELECT e.*, n.method, n.account_id AS link_account," + asof.ATTRS +
+        " FROM events e JOIN LATERAL (SELECT account_id FROM identity_links l"
         " WHERE l.account_ref = e.account_ref AND l.available_at <= %(t)s"
         " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) l ON l.account_id = %(a)s"
+        " LEFT JOIN LATERAL (SELECT method, account_id FROM identity_links l"
+        " WHERE l.account_ref = e.account_ref AND l.available_at <= %(now)s"
+        " ORDER BY l.available_at DESC, l.id DESC LIMIT 1) n ON true"
         " WHERE e.type = ANY(%(types)s) AND e.available_at <= %(t)s AND e.occurred_at <= %(t)s"
         " ORDER BY e.entity_id, e.occurred_at, e.version_key, e.id",
-        {"t": as_of, "a": account_id, "types": SHOWN_TYPES}).fetchall()
+        {"t": as_of, "now": now, "a": account_id, "types": SHOWN_TYPES}).fetchall()
     mark = conn.execute("SELECT watermarks->>'product' AS m FROM score_runs WHERE id = %s",
                         (score["run_id"],)).fetchone()["m"]
     ctx = {"as_of": as_of, "product_mark": mark and datetime.fromisoformat(mark),
@@ -303,7 +307,7 @@ def build_pack(conn, tenant_id: UUID, case_id: UUID) -> EvidencePack:
              in enumerate(_score_items(account["name"], score, changes, currency), start=1)]
     shown = [(e, None) for e in events]
     if case["kind"] == "model_topk" and score:
-        shown = _feature_events(conn, case["account_id"], score) + shown
+        shown = _feature_events(conn, case["account_id"], score, now) + shown
     for e, display in shown:
         display, trust = (display, "system") if display else _render(e, currency)
         # safe only if an exact key links the item to this case's own account right now

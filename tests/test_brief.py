@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import re
 import uuid
@@ -408,11 +409,52 @@ def test_topk_pack_hash_is_deterministic(trained_world_db, topk_packs):
             assert build_pack(conn, tid, case).hash() == pack.hash()
 
 
-def test_template_email_uses_customer_safe_displays(topk_packs):
-    for _, pack in topk_packs.values():
-        out = template.render(pack)
-        assert validate.check(json.dumps(out), "end_turn", pack)[1] == []
-        safe = [i for i in pack.items if i.customer_safe and i.trust == "system"]
-        if safe and out["email"]:
-            assert out["email"]["evidence_ids"] == [i.id for i in safe[:2]]
-            assert safe[0].display in out["email"]["body"]
+PLAYS = ["value_review", "support_escalation", "exec_check_in", "save_call",
+         "billing_outreach", "renewal_check_in"]
+
+
+@pytest.mark.parametrize("play", PLAYS)
+def test_template_email_quotes_no_system_evidence(play, pack, topk_packs):
+    """Ruling AF (2): the template email is plain words to the customer, with no evidence
+    display, number, contact title or evidence id; the CSM summary still cites the evidence."""
+    for p in [pack, *(pk for _, pk in topk_packs.values())]:
+        p = dataclasses.replace(p, play=play)
+        out = template.render(p)
+        assert validate.check(json.dumps(out), "end_turn", p)[1] == []
+        email = out["email"]
+        words = f"{email['subject']}\n{email['body']}"
+        assert email["evidence_ids"] == [] and not re.search(r"\d", words), words
+        assert "{first_name}" in email["body"] and "{sender_name}" in email["body"]
+        titles = [i.display.split("from their ", 1)[1] for i in p.items
+                  if "from their " in i.display]
+        assert not [i.display for i in p.items if i.display in words]
+        assert not [t for t in titles if t.lower() in words.lower()]
+        assert out["summary"] and all(pt["evidence_ids"] for pt in out["summary"])
+        assert [pt["text"] for pt in out["summary"]] == [
+            i.display for i in p.items if i.trust == "system"][:5]
+
+
+def test_find_new_champion_has_no_template_email(pack):
+    assert template.render(dataclasses.replace(pack, play="find_new_champion"))["email"] is None
+
+
+def test_feature_event_relinked_after_the_run_is_not_customer_safe(trained_world_db,
+                                                                   topk_packs):
+    """Ruling AF (1): a feature event's safety reads the link usable now, not at the run's
+    as_of, so a ref re-linked to another account after the run is never customer_safe."""
+    tid, db = tenant_id("hearthline"), trained_world_db["db"]
+    case, (account, pack) = next(
+        (c, ap) for c, ap in topk_packs.items()
+        if any(i.customer_safe and i.trust == "system" for i in ap[1].items))
+    it = next(i for i in pack.items if i.customer_safe and i.trust == "system")
+    assert clock.now() > AS_OF
+    with db.tenant_tx(tid) as conn, conn.transaction(force_rollback=True):
+        ref = conn.execute("SELECT account_ref FROM events WHERE id = %s",
+                           (it.event_id,)).fetchone()["account_ref"]
+        other = conn.execute("SELECT id FROM accounts WHERE id <> %s ORDER BY id LIMIT 1",
+                             (account,)).fetchone()["id"]
+        conn.execute("INSERT INTO identity_links (source, account_ref, account_id, method,"
+                     " available_at) VALUES ('test', %s, %s, 'zendesk_external_id', %s)",
+                     (ref, other, clock.now()))
+        after = next(i for i in build_pack(conn, tid, case).items if i.event_id == it.event_id)
+    assert not after.customer_safe
