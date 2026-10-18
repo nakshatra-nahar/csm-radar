@@ -499,7 +499,8 @@ Four independent reviews (data architecture, ML rigour, CS end user, security) c
 
 ## 14. What breaks first at 10x
 
-This will be measured on a 10x generated world and written into the README:
+These are measured at 1x and on tiled 10x frames; DB-level 10x numbers are projected from 1x
+(docs/measurements.md). They are written into the README:
 - in-memory feature build per tenant (time and RAM);
 - sweep duration;
 - bootstrap replay throughput;

@@ -34,10 +34,11 @@ History records per source:
 
 ## Bootstrap
 
-Command: `radar bootstrap` with `RADAR_OWNER_DSN=postgresql://postgres:postgres@localhost:54329/radar_full`,
-on an empty database. The final rebuild (no Anthropic key set) took **374 s**. It applied 7
-migrations and ran 298 jobs. It ingested 140,130 hearthline records, 83,268 tallyworks records
-and 7,450 kitewire records, and buffered 31,067 / 18,458 / 5,983 for later delivery.
+Command: `radar bootstrap` with
+`RADAR_OWNER_DSN=postgresql://postgres:postgres@localhost:54329/radar_full`, on an empty
+database. The final rebuild (no Anthropic key set) took **374 s**. It applied 7 migrations and
+ran 298 jobs. It ingested 140,130 hearthline records, 83,268 tallyworks records and 7,450
+kitewire records, and buffered 31,067 / 18,458 / 5,983 for later delivery.
 
 Per-step times are from the previous rebuild, timed step by step. That rebuild had an Anthropic
 key with no credit, so all 280 LLM calls failed (HTTP 400). Each failure took 440 ms on average
@@ -62,21 +63,22 @@ The replay rate falls as the tenant grows: hearthline ingests at about half tall
 
 `pg_database_size('radar_full')` after the bootstrap: **584,449,047 bytes (557 MiB)**. Neon
 Free allows 1 GB, so there is about 416 MB (decimal) of headroom. The figures below are
-`pg_total_relation_size` (table, indexes and TOAST).
+`pg_total_relation_size` (table, indexes and TOAST), in MiB like every size table on this
+page. The prose gives decimal MB where it says so.
 
 | table | size | rows |
 |---|---|---|
-| raw_records | 228 MB | 230,848 |
-| events | 196 MB | 229,760 |
-| account_scores | 55 MB | 39,980 |
-| feed_buffer | 43 MB | 55,508 |
-| quarantine | 8.9 MB | 25,644 |
-| identity_links | 8.4 MB | 27,405 |
-| contacts | 4.8 MB | 11,232 |
-| accounts | 2.4 MB | 4,900 |
-| briefs | 0.9 MB | 268 |
-| audit_log | 0.6 MB | 860 |
-| everything else | under 0.3 MB each | |
+| raw_records | 228 MiB | 230,848 |
+| events | 196 MiB | 229,760 |
+| account_scores | 55 MiB | 39,980 |
+| feed_buffer | 43 MiB | 55,508 |
+| quarantine | 8.9 MiB | 25,644 |
+| identity_links | 8.4 MiB | 27,405 |
+| contacts | 4.8 MiB | 11,232 |
+| accounts | 2.4 MiB | 4,900 |
+| briefs | 0.9 MiB | 268 |
+| audit_log | 0.6 MiB | 860 |
+| everything else | under 0.3 MiB each | |
 
 Per tenant (each table's bytes split by its share of rows): hearthline 326.9 MiB, tallyworks
 194.8 MiB, kitewire 25.0 MiB.
@@ -212,9 +214,12 @@ order:
 | kitewire | 7 | 0.3, 0.3, 0.5, 0.5, 0.4, 0.4, 0.4 |
 
 From about the second simulated day on, the 10x generator and the tiling script (see 10x
-below) ran on the same machine. That likely explains the later, slower sweeps. Each sweep
-was then run once more on its own, after the soak, on the same copy, with `radar.agent.handlers.daily_sweep` and the
-clock at Monday 2026-10-26 12:00 UTC (a freezing sweep for hearthline and tallyworks):
+below) ran on the same machine. That likely explains the later, slower sweeps.
+
+So each sweep was run once more, on its own, after the soak and on the same copy. The clock
+was at Monday 2026-10-26 12:00 UTC, so hearthline and tallyworks froze their lists. Command:
+`uv run python scripts/measure_10x.py sweep --dsn <the copy>`, which calls
+`handlers.daily_sweep` and times its steps:
 
 | tenant | total | score_tenant | rule facts | the rest (cases, freeze, digests, freshness) |
 |---|---|---|---|---|
@@ -266,7 +271,8 @@ Jobs (all done; **0 dead** in the whole jobs table):
   25th). Tallyworks swept 2026-10-19 to 2026-10-25 (London; its 18th had been swept by the
   bootstrap, and the 25th, the day the clocks went back, swept once). The bootstrap's own sweep
   ran at 03:47 New York and 00:47 Los Angeles time on the 18th, before the 06:00 sweep hour, so
-  those two tenants had the bootstrap sweep and the scheduled sweep that day.
+  those two tenants had the bootstrap sweep and the scheduled sweep that day. Since Ruling BC
+  the bootstrap sweep counts as that local day's sweep, so a new bootstrap sweeps once.
 - **Monday freeze:** on 2026-10-19 each tenant froze one list per active CSM for that week: 16
   (hearthline), 12 (tallyworks), 3 (kitewire). No other week froze.
 - **SLA escalations:** 148 (hearthline), 114 (tallyworks), 31 (kitewire). Nobody worked the
@@ -275,8 +281,8 @@ Jobs (all done; **0 dead** in the whole jobs table):
   03:05 and closed at 09:05, then opened again at 2026-10-24 19:05. Kitewire opened at
   2026-10-19 07:05 and closed at 18:05, then opened again at 2026-10-25 00:05. Each opened at the
   first hourly check after its `expected_by` (last delivery + 24 h), 4 to 50 minutes
-  later. These are real gaps in the generated Gmail feed: no mail over the weekends. The two later incidents were still open at the end,
-  because Gmail resumes on Monday.
+  later. These are real gaps in the generated Gmail feed: no mail over the weekends. The two
+  later incidents were still open at the end, because Gmail resumes on Monday.
 - **score_runs left running: 0.**
 - **Briefs generated:** 67 (hearthline), 58 (tallyworks), 5 (kitewire). 135 brief jobs made 130
   new briefs.
@@ -287,8 +293,9 @@ Jobs (all done; **0 dead** in the whole jobs table):
 
 ## 10x
 
-Design section 14 asks for these numbers measured on a loaded 10x world. Only part of them
-are. Measured: the generated 10x world's counts, and feature build, scoring and RAM on 10x
+These are measured at 1x and on tiled 10x frames; DB-level 10x numbers are projected from 1x.
+
+Measured: the generated 10x world's counts, and feature build, scoring and RAM on 10x
 frames tiled from hearthline's 1x frames (not the generated 10x world). Projected from 1x:
 the 10x database size, `load_frames` time and RAM, bootstrap replay time and Postgres plan
 quality. No 10x world was loaded into Postgres. This laptop had 3.0 GiB of disk free, and a
@@ -297,11 +304,11 @@ loaded 10x world needs about 5.7 GB of database plus about 1.8 GB of feed files 
 
 ### World size
 
-Command: `generate(out_dir, seed=7, scale=10, tenants=[slug], count_only=True)` from
-`radar.sim`, one process per tenant (writes nothing). Before a fix in this task, hearthline at
-10x never finished: it needs 26,000 company names and its surname × noun × place space holds
-24,480, so the name picker retried forever. Names now take a number once 100 draws in a row
-collide; the 1x world is byte-identical.
+Command: `uv run python scripts/measure_10x.py world <slug>`, one process per tenant. It calls
+`generate(out_dir, seed=7, scale=10, tenants=[slug], count_only=True)` and writes nothing.
+Before a fix in this task, hearthline at 10x never finished: it needs 26,000 company names and
+its surname × noun × place space holds 24,480, so the name picker retried forever. Names now
+take a number once 100 draws in a row collide; the 1x world is byte-identical.
 
 | | hearthline | tallyworks | kitewire |
 |---|---|---|---|
@@ -313,13 +320,14 @@ collide; the 1x world is byte-identical.
 
 ### Feature build and scoring for hearthline, in memory
 
-Method (scratch script, not committed): load hearthline's Frames from `radar_full` with
-`load_frames`, then tile them 10 times. Copy k gets new ids: event and link ids plus k × 10⁹,
-account and contact uuids `uuid5(id:k)`, and an `xk.` inserted after the prefix of every key
-string (`sf:x3.001…`, `email:x3.ann@…`, `stripe_sub:x3.sub_…`), so copies never join to each
-other. Users are not tiled, so each book is 10 times larger. Then time `compute_features` and
-`scoring.score_frame` for one as-of, 2026-10-18 07:50:42 UTC, with the active model, and
-`rule_facts` (the must-act rules). Check: copy 3 of every account has exactly the 1x features.
+Command: `uv run python scripts/measure_10x.py tile`. It loads hearthline's Frames from
+`radar_full` with `load_frames`, then tiles them 10 times. Copy k gets new ids: event and link
+ids plus k × 10⁹, account and contact uuids `uuid5(id:k)`, and an `xk.` inserted after the
+prefix of every key string (`sf:x3.001…`, `email:x3.ann@…`, `stripe_sub:x3.sub_…`), so copies
+never join to each other. Users are not tiled, so each book is 10 times larger. Then time
+`compute_features` and `scoring.score_frame` for one as-of, 2026-10-18 07:50:42 UTC, with the
+active model, and `rule_facts` (the must-act rules). Check: copy 3 of every account has exactly
+the 1x features.
 
 | | 1x | 10x |
 |---|---|---|
@@ -349,24 +357,43 @@ and take about 10.6 s (linear: 7.6 µs per event at 1x). The DataFrame it keeps 
 
 ### Hot queries as the app roles (1x, `radar_full`)
 
-`EXPLAIN (ANALYZE, BUFFERS)` inside a transaction with `SET LOCAL ROLE` and `app.tenant_id` set
-to hearthline, so row-level security applies as in the app. Cold is the first run after other
-work; warm is the second.
+Command: `uv run python scripts/measure_10x.py explain`. It logs in as the app's role, sets
+`app.tenant_id` to hearthline, and runs the app's own function, so row-level security applies
+as in the app. It records the first SQL statement the function runs and runs
+`EXPLAIN (ANALYZE, BUFFERS)` on it twice. Cold is the first run after other work; warm is the
+second. The brief row is from after Ruling BB (migration 008). The other rows are from before
+it; a re-run after it gives the same warm times (50.6, 0.5 and 10.1 ms).
 
 | query | role | plan | rows | cold | warm |
 |---|---|---|---|---|---|
 | as-of event load (`asof.load_frames` events query) | radar_worker | parallel seq scan of `events` (2 workers), RLS as a one-time filter | 139,487 | 986 ms (15,871 buffers read) | 53 ms |
 | /week list (`queries.worklist_rows`) | radar_web | index scans on worklists, accounts, account_scores; seq scans on cases (280 rows), outbox (309) and, per item, worklist_items (315) | 10 | 8.5 ms | 0.6 ms |
 | account evidence timeline (`queries.TIMELINE`, 40 rows) | radar_web | seq scan, sort and unique of the tenant's 16,240 identity links, then `events_account_ref_idx` per ref | 40 | 20 ms | 10.9 ms |
-| brief evidence (`evidence` query in `agent/evidence.py`) | radar_worker | index scan of 81,834 events of the shown types, a memoized lateral link lookup per distinct ref (9,077) | 42 | not taken | 3,732 ms |
+| brief evidence (`evidence.FEATURE_EVENTS`) | radar_worker | seq scan of `identity_links` for the account's refs (3), then `identity_links_ref_idx` and `events_account_ref_idx` per ref | 17 | 1.1 ms | 1.1 ms (610 buffer hits) |
 
-The brief query's link lookup uses `identity_links_lookup_idx (tenant_id, source, account_ref,
-available_at DESC)`. The lateral has no `source` condition, so each lookup walks the tenant's
-part of the index: 2,159,845 buffer hits for 9,077 lookups. Timed directly as radar_worker for
-3 model-slot accounts each: kitewire 0.04 to 0.11 s, tallyworks 1.56 to 2.44 s, hearthline
-3.75 to 3.81 s (medians 0.05, 1.56 and 3.75 s). Events and links grow 1.68x from tallyworks to
-hearthline and time grows 2.40x, so time grows as about size^1.7. From kitewire to hearthline
-(18.8x) it grows 75x, about size^1.5.
+Before Ruling BB the brief query read every shown-type event of the tenant (81,834). For each
+one it looked up the ref's latest link in `identity_links_lookup_idx`. That index leads with
+`source`, which the lookup does not know, so each lookup walked the tenant's part of the index.
+One hearthline brief took 3,732 ms and 2,159,845 buffer hits.
+
+Now the query starts from the account's own refs, as the timeline does. Migration 008 adds
+`identity_links_ref_idx (tenant_id, account_ref, available_at DESC, id DESC)` for both link
+lookups. The pack is the same: tests/test_brief.py builds 20 hearthline packs on the small
+world with the old query and the new one and compares them.
+
+Wall time: `uv run python scripts/measure_10x.py briefs`, warm, 3 model-slot accounts per
+tenant. The evidence query takes 1 to 2 ms in every tenant. Before Ruling BB it took 0.04 to
+0.11 s (kitewire), 1.56 to 2.44 s (tallyworks) and 3.75 to 3.81 s (hearthline). The whole
+pack (`build_pack`, 3 model_topk cases per tenant) takes 2 to 4 ms. The first run after other
+work took up to 40 ms for the query and 50 ms for the pack.
+
+One part still grows with the world: the seq scan that finds the account's refs. It reads the
+whole `identity_links` table (27,405 rows for all tenants; RLS drops the others). At 10x that
+is about 274,000 rows, so about 10 ms (projected, linear).
+
+A 2-day soak re-run on a copy of `radar_full` after the fix (same script, `--days 2`) ran 113
+brief jobs in 0.7 s in all, 6 ms each on average. The 7-day soak's brief jobs, before the fix,
+averaged 1.62 s.
 
 ### Database size at 10x
 
@@ -389,11 +416,12 @@ From the measurements above, in the order they break as the world grows.
 1. **Neon Free storage (1 GB) breaks at about 1.7x.** The bootstrapped database is 584.4 MB at
    1x and grows with records, so it passes 1 GB at 1.71x and reaches about 5.7 GB at 10x. At 1x
    it already fills 1 GB about 77 days after bootstrap if nobody prunes (5.4 MB a day, 4.6 MB of
-   it score rows). Fix: run `radar prune` on a schedule; drop `feed_buffer` (43 MB, demo only)
+   it score rows). Fix: run `radar prune` on a schedule; drop `feed_buffer` (43 MiB, demo only)
    once the feed is delivered; at 10x, move to a paid tier and partition `raw_records` and
    `events` by month, keeping old months in cold storage.
 2. **Worker memory on Vercel breaks at about 2.9x hearthline.** A function gets 2 GB on Hobby
-   and at most 4 GB on Pro (Vercel docs, Functions limits).
+   and at most 4 GB on Pro (Vercel Functions limits,
+   https://vercel.com/docs/functions/limitations).
    Every sweep, score run and `evaluate_rules` job loads the tenant's whole history with
    `load_frames`, which peaks at 5.0 KB per event over a 99 MiB baseline. That reaches 2 GB at
    about 400,000 events in one tenant (2.9x hearthline). A 10x hearthline would need about
@@ -402,37 +430,42 @@ From the measurements above, in the order they break as the world grows.
    `evaluate_rules` to the one account it checks (its `shortcut:` comment already says so).
    Even then it is close: in the tiled run, the 10x frames, features and scores added 1,389 MiB
    over the 1x load.
-3. **Brief generation breaks at about 5x to 6x hearthline.** Jobs run inside `/internal/tick`,
-   a Vercel function with `maxDuration` 300 s (vercel.json). `worker.run_for` checks its 240 s
-   tick budget only between ticks, and a tick runs up to 20 jobs, so a job that starts just
-   under 240 s has only 300 − 240 = 60 s before Vercel kills the function. The killed job keeps
-   its lease, is reaped and retried, and goes dead if it keeps landing late in a tick. The brief
-   evidence query takes 3.75 s per hearthline brief at 1x and grows as size^1.5 to size^1.7, so
-   it passes 60 s at 16^(1/1.7) to 16^(1/1.5), or 5.1x to 6.3x. At 10x a brief takes 120 to
-   190 s, so a tick finishes at most one or two before the next one is killed. Above 13x to 19x
-   a brief passes 300 s and can never finish. Projected from the soak's 135 brief jobs a week
-   (mean 1.62 s): 1,350 jobs at 51 to 81 s each, 19 to 30 hours of worker time a week. The 15-minute
-   ticks give 44.8 hours a week (672 ticks × 240 s). A Monday's briefs would land over a day or
-   more instead of within the hour. Fix: in `run_for`, check the time left before each job, not
-   each tick, and do not start a job whose expected time (its kind's recent p95) exceeds
-   `maxDuration` minus the time spent, or lower `TICK_BUDGET_S` so the gap covers the slowest
-   job. Then speed the query: an index on `identity_links (tenant_id, account_ref,
-   available_at DESC, id DESC)`, and start from the account's refs instead of every event of
-   the tenant, as the timeline does.
-4. **Rule checks cost about 7 hours a week at 10x.** At 1x: 262 checks a week, 0.95 s each,
-   almost all of it the whole-tenant load. At 10x: about 10 times the checks, each about 10 times
-   longer, so about 2,620 × 9.5 s, or 6.9 hours a week. That fits the tick budget, but each check
-   also hits the memory limit in item 2. The fix is the same as item 2.
-5. **The daily sweep does not break.** It takes 3.0 s for hearthline at 1x. Projected to 10x: two
-   whole-tenant loads (2 × 10.6 s), features and scoring (2.9 s, measured), rules (0.6 s,
-   measured) and the rest (0.51 s at 1x) scaled linearly to about 5 s. That is about 30 s, well
-   under the 60 s a late job gets (item 3). It does need the memory fix in item 2.
+3. **Brief generation no longer grows with the world (Ruling BB).** Jobs run inside
+   `/internal/tick`, a Vercel function with `maxDuration` 300 s (vercel.json).
+   `worker.run_for` checks its 240 s tick budget only between ticks, and a tick runs up to 20
+   jobs. So a job that starts late in a tick gets at most 300 − 240 = 60 s before Vercel kills
+   the function, and later jobs in that tick get less. A killed job keeps its lease, is reaped
+   and retried, and goes dead if it keeps landing late.
+   Before Ruling BB the brief evidence query took 3.75 s per hearthline brief at 1x and grew as
+   size^1.5 to size^1.7, so it would have passed 60 s at 5.1x to 6.3x. It now reads only the
+   account's refs: 1 to 2 ms at 1x, about 10 ms at 10x (projected). A template brief job took
+   6 ms on average in the soak re-run. With a key, the LLM call dominates. Its time does not
+   grow with the world, but it is not measured (the key had no credit). Both attempts (up to
+   4,096 output tokens each) must fit in the time a late job has left.
+   Fix: pass the tick's deadline from `run_for` down to `tick()`, which runs the jobs, and do not
+   start a job whose expected time (its kind's recent p95) exceeds the time left.
+4. **Rule checks cost about 7 hours a week at 10x; with briefs, the worker uses about 15% of
+   its weekly budget.** At 1x: 262 checks a week, 0.95 s each, almost all of it the
+   whole-tenant load. At 10x: about 10 times the checks, each about 10 times longer, so about
+   2,620 × 9.5 s, or 6.9 hours a week. Briefs at 10x are about 1,350 jobs a week (10 × the
+   soak's 135). As templates (6 ms at 1x plus the 10 ms link scan) they take about 20 s a week.
+   Together: about 6.9 of the 44.8 hours the 15-minute ticks give each week (672 ticks ×
+   240 s). The rest, 37.9 hours, covers LLM briefs of up to 101 s each (37.9 h / 1,350). That
+   is more than the 60 s a late job gets, so the late-job window in item 3 binds first. Each
+   rule check also hits the memory limit in item 2. The fix is the same as item 2.
+5. **The daily sweep does not break.** It takes 3.0 s for hearthline at 1x. Projected to 10x:
+   two whole-tenant loads (2 × 10.6 s), features and scoring (2.9 s, measured), rules (0.6 s,
+   measured) and the other sweep work scaled linearly to about 5 s. The other sweep work is
+   0.51 s at 1x: the 3.01 s total minus the two loads, `score_frame` and `rule_facts`. That is
+   about 30 s in all, well under the 60 s a late job gets (item 3). It does need the memory fix
+   in item 2.
 6. **Page queries slow down linearly but stay fast.** The timeline sorts all of the tenant's
    identity links on every account page: 16,240 at 1x (10.9 ms warm), 162,400 at 10x. The /week
    list seq-scans `worklist_items` once per item; for hearthline at 1x that table grows by
    about 160 rows a week.
-   Fix: the `identity_links` index from item 3, and an index on `worklist_items (tenant_id,
-   account_id)` and `cases (tenant_id, account_id)`.
+   Fix: start the timeline from the account's refs, as the brief query does since Ruling BB,
+   so it uses `identity_links_ref_idx` (migration 008). Add indexes on
+   `worklist_items (tenant_id, account_id)` and `cases (tenant_id, account_id)`.
 7. **Bootstrap replay gets slower per record as a tenant grows.** It runs at 953 records/s for
    hearthline and 1,806/s for tallyworks. At 10x hearthline's 1.38 M history records would take at
    least 1,450 s at the 1x rate. The bootstrap runs on a laptop and is then pushed (`radar push`),
