@@ -58,7 +58,7 @@ export RADAR_SECRET_KEY="$(openssl rand -hex 32)"
 export TICK_SECRET="$(openssl rand -hex 32)"
 printf 'Demo passcode: '; read -rs RADAR_DEMO_PASSCODE; echo; export RADAR_DEMO_PASSCODE
 printf 'Neon direct owner URL (A2.3): '; read -rs NEON_DIRECT_OWNER_URL; echo; export NEON_DIRECT_OWNER_URL
-printf 'Anthropic API key (or Enter): '; read -rs ANTHROPIC_API_KEY; echo  # not exported: A4 stays on templates
+printf 'Anthropic API key (or Enter): '; read -rs VERCEL_ANTHROPIC_KEY; echo  # its own name, not exported: A4 stays on templates
 export NEON_POOLED_HOST='<the -pooler host from A2.3>'
 ```
 
@@ -140,7 +140,7 @@ secret RADAR_SECRET_KEY "$RADAR_SECRET_KEY"
 secret RADAR_DEMO_PASSCODE "$RADAR_DEMO_PASSCODE"
 secret TICK_SECRET "$TICK_SECRET"
 secret CRON_SECRET "$TICK_SECRET"   # Vercel cron sends this one; same value as TICK_SECRET
-[ -n "$ANTHROPIC_API_KEY" ] && secret ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY"  # from A3
+[ -n "$VERCEL_ANTHROPIC_KEY" ] && secret ANTHROPIC_API_KEY "$VERCEL_ANTHROPIC_KEY"  # from A3
 add FEED_SOURCE db                  # the rest of the feed is in the feed_buffer table
 add RADAR_PGBOUNCER 1
 add RADAR_ENV production            # HTTPS-only session cookie; role DSNs required
