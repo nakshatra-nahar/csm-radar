@@ -8,14 +8,13 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 
 import pytest
 from psycopg.rows import dict_row
 
 from radar import clock, policy
 from radar.agent import handlers, jobs, worker
-from radar.bootstrap import replay_feed, seed_tenants_and_users
+from radar.bootstrap import _bootstrap_sweep, replay_feed, seed_tenants_and_users
 from radar.db import Database, owner_connect
 from radar.tenants import tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
@@ -56,10 +55,7 @@ def drain(db, at: datetime) -> dict:
 
 def bootstrap_sweep(db, at: datetime) -> None:
     """What bootstrap does at the end: the first actionable sweep opens the backlog."""
-    with db.system_tx() as conn:
-        local_date = at.astimezone(ZoneInfo("Europe/London")).date().isoformat()
-        jobs.once_per_period(conn, TALLY, "daily_sweep", local_date)
-        jobs.enqueue(conn, "daily_sweep", TALLY, {"bootstrap": True}, lane=1, run_at=at)
+    _bootstrap_sweep(db, TALLY, at)
 
 
 def rows(owner, sql, *args):
@@ -129,6 +125,18 @@ def test_sweep_runs_once_per_period(world):
         drain(world.db, at)
     assert len(rows(world.owner, "SELECT * FROM score_runs WHERE trigger = 'sweep'")) == 1
     drain(world.db, T0 + timedelta(days=1))
+    assert len(rows(world.owner, "SELECT * FROM score_runs WHERE trigger = 'sweep'")) == 2
+
+
+def test_bootstrap_sweep_counts_as_that_days_sweep(world):
+    """Ruling BC: a bootstrap before the sweep hour records that local day's sweep, so the
+    scheduled 06:00 sweep does not run a second time that day."""
+    early = datetime(2026, 10, 25, 3, tzinfo=UTC)  # Sunday 03:00 in London (GMT)
+    bootstrap_sweep(world.db, early)
+    drain(world.db, early)
+    drain(world.db, early + timedelta(hours=4))  # 07:00 in London, past sweep_hour_local
+    assert len(rows(world.owner, "SELECT * FROM score_runs WHERE trigger = 'sweep'")) == 1
+    drain(world.db, early + timedelta(days=1, hours=4))  # the next day sweeps as usual
     assert len(rows(world.owner, "SELECT * FROM score_runs WHERE trigger = 'sweep'")) == 2
 
 

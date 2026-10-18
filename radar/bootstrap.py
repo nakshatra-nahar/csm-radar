@@ -159,11 +159,15 @@ def backfill_runs(db: Database, tenant_id, weeks: int = 12, *, end: datetime) ->
 
 def _bootstrap_sweep(db: Database, tid, now: datetime) -> None:
     """Queue the one actionable sweep that opens the backlog past the breaker (Ruling AB).
-    Its dedupe key absorbs the day's scheduled sweep while it waits."""
+    It counts as that local day's sweep (Ruling BC), so the scheduled one does not run too."""
     with db.tenant_tx(tid) as conn:
         if conn.execute("SELECT 1 FROM audit_log WHERE action = 'bootstrap_backlog'"
                         " LIMIT 1").fetchone():
             return
+        tz = conn.execute("SELECT config->>'timezone' AS tz FROM tenants WHERE id = %s",
+                          (tid,)).fetchone()["tz"]
+        jobs.once_per_period(conn, tid, "daily_sweep", now.astimezone(ZoneInfo(tz)).date()
+                             .isoformat())
         jobs.enqueue(conn, "daily_sweep", tid, {"bootstrap": True}, dedupe_key="daily_sweep",
                      lane=1, run_at=now)
 

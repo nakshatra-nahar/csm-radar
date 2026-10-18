@@ -99,6 +99,9 @@ def run(dsn: str, days: int = 7, step_minutes: int = 15) -> dict:
         with owner_connect(dsn, autocommit=True) as conn:
             start = conn.execute("SELECT max(finished_at) FROM jobs"
                                  " WHERE status = 'done'").fetchone()[0]
+            if start is None:
+                raise SystemExit("soak: no finished job in this database; run `radar"
+                                 " bootstrap` on it first")
             marks = _marks(conn)
             size = lambda: conn.execute(  # noqa: E731
                 "SELECT pg_database_size(current_database())").fetchone()[0]

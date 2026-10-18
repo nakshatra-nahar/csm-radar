@@ -47,8 +47,9 @@ from radar.sim.params import PARAMS
 from radar.sim.signals import emails, product_events, usage
 from radar.tenants import TENANTS, TenantSpec
 
-# hearthline's names run out near 24,000; at 1x (2,600 of them) 100 collisions in a row has
-# odds below 1e-97, so the fallback never fires there and 1x worlds are unchanged
+# hearthline's names run out near 24,000. At 1x (2,600 of them) the two short formats fill
+# up, so a late draw collides about half the time (0.49); 100 collisions in a row still has
+# odds near 1e-31, so the fallback never fires there and 1x worlds are unchanged
 NAME_TRIES = 100
 
 

@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score
 from radar.sim import INJECTION_ACCOUNT_NAME, VP_CASE_NAMES, simulate, staff
 from radar.sim.params import PARAMS
 from radar.sim.truth import write_truth
-from radar.sim.world import _company_name
+from radar.sim.world import NAME_TRIES, _company_name
 from radar.tenants import TENANTS
 
 INJECTION = (
@@ -251,5 +251,13 @@ def test_bug_episode_is_reported_the_week_it_starts(worlds):
 def test_company_names_run_past_the_name_space():
     """A 10x hearthline needs 26,000 names; its surname x noun x place space holds fewer."""
     rng, taken = np.random.default_rng(0), set()
-    names = [_company_name("hearthline", rng, taken) for _ in range(26_000)]
+
+    class Bounded:  # fails, not hangs, if a name ever takes more than NAME_TRIES draws
+        left = 5 * NAME_TRIES  # five integers per try
+
+        def integers(self, *args):
+            self.left -= 1
+            assert self.left >= 0, "the name picker kept retrying"
+            return rng.integers(*args)
+    names = [_company_name("hearthline", Bounded(), taken) for _ in range(26_000)]
     assert len(set(names)) == 26_000
