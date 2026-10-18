@@ -56,8 +56,9 @@ def schedule(db: Database, now: datetime) -> None:
                 if jobs.enqueue(conn, "daily_sweep", t["id"], {"period": period},
                                 dedupe_key="daily_sweep", lane=1, run_at=now) is None:
                     # absorbed by a sweep still queued: it runs for the newer day, so a
-                    # Monday absorbed into Sunday's job still freezes the week
-                    conn.execute("UPDATE jobs SET payload = %s WHERE tenant_id = %s"
+                    # Monday absorbed into Sunday's job still freezes the week; merged, so a queued
+                    # bootstrap sweep keeps its flag
+                    conn.execute("UPDATE jobs SET payload = payload || %s WHERE tenant_id = %s"
                                  " AND dedupe_key = 'daily_sweep' AND status = 'queued'",
                                  (Jsonb({"period": period}), t["id"]))
 

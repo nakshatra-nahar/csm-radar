@@ -10,7 +10,7 @@
     {% for s in freshness %}
     <li class="{{ 'stale' if s.stale else 'ok' }}">
       <b>{{ s.source }}</b> {% if s.stale %}<strong>stale</strong>{% else %}fresh{% endif %},
-      last data {{ s.last_deliver_at.strftime('%Y-%m-%d %H:%M UTC') if s.last_deliver_at else 'never' }}
+      last data {{ s.last_data_at.strftime('%Y-%m-%d %H:%M UTC') if s.last_data_at else 'never' }}
     </li>
     {% else %}
     <li>No data has arrived yet.</li>

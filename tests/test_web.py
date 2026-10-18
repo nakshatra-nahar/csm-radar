@@ -216,6 +216,27 @@ def test_week_shows_frozen_list_with_reasons_and_draft_status(web):
     assert all(i["reason"].replace("_", " ") in page for i in must)
 
 
+def test_product_freshness_shows_the_usage_batch_it_judges(web):
+    """Ruling BJ: daily track events keep product's last delivery fresh, but staleness is
+    judged on the monthly usage batch, so My week and /ops show that batch's time."""
+    batch = one(web, "SELECT max(available_at) AS at FROM events WHERE tenant_id = %s"
+                " AND type = 'product.usage'", HEARTH)["at"]
+    track = batch + timedelta(days=3)
+    before = one(web, "SELECT last_deliver_at FROM source_status WHERE tenant_id = %s"
+                 " AND source = 'product'", HEARTH)["last_deliver_at"]
+    web.owner.execute("UPDATE source_status SET last_deliver_at = %s WHERE tenant_id = %s"
+                      " AND source = 'product'", (track, HEARTH))
+    try:
+        week = client_as(web, web.csm).get("/week").text
+        ops = client_as(web, user_of(web, HEARTH, "admin")).get("/ops").text
+    finally:
+        web.owner.execute("UPDATE source_status SET last_deliver_at = %s WHERE tenant_id = %s"
+                          " AND source = 'product'", (before, HEARTH))
+    for page in (week, ops):
+        assert batch.strftime("%Y-%m-%d %H:%M UTC") in page
+        assert track.strftime("%Y-%m-%d %H:%M UTC") not in page
+
+
 def test_week_shows_new_since_monday_must_act_after_mondays(web):
     """Ruling BH: a cancellation announced on Tuesday is on My week, chipped, after the
     Monday must-acts and before the check-ins and model slots."""

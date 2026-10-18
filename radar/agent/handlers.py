@@ -120,15 +120,18 @@ def is_stale(source: str, last: datetime | None, now: datetime, hours: dict) -> 
     return now > last + timedelta(hours=hours[source])
 
 
+# source_status plus last_data_at, the time freshness is judged on; for product that is the
+# monthly usage batch, since daily Segment events share the source. My week and /ops show it.
+SOURCES_SQL = ("SELECT s.*, CASE WHEN s.source = 'product' THEN (SELECT max(available_at)"
+               " FROM events WHERE type = 'product.usage') ELSE s.last_deliver_at END"
+               " AS last_data_at FROM source_status s")
+
+
 def check_freshness(conn, now: datetime, hours: dict) -> None:
     """One open source_stale incident per stale source (the My Week banner reads it); it
     closes when the source catches up. Run by the hourly sla_check and the daily sweep."""
-    for s in conn.execute("SELECT source, last_deliver_at FROM source_status"
-                          " ORDER BY source").fetchall():
-        source, last = s["source"], s["last_deliver_at"]
-        if source == "product":  # the monthly batch: daily Segment events share the source
-            last = conn.execute("SELECT max(available_at) AS at FROM events"
-                                " WHERE type = 'product.usage'").fetchone()["at"]
+    for s in conn.execute(SOURCES_SQL + " ORDER BY source").fetchall():
+        source, last = s["source"], s["last_data_at"]
         if not is_stale(source, last, now, hours):
             conn.execute("UPDATE incidents SET closed_at = %s WHERE kind = 'source_stale'"
                          " AND source = %s AND closed_at IS NULL", (now, source))

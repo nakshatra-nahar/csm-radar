@@ -14,7 +14,7 @@
   <div class="scroll">
   <table class="list">
     <thead><tr>
-      <th scope="col">Source</th><th scope="col">Freshness</th><th scope="col">Watermark (last delivery)</th>
+      <th scope="col">Source</th><th scope="col">Freshness</th><th scope="col">Last data (product: usage batch)</th>
       <th scope="col">Last ingest</th><th scope="col" class="n">Received</th><th scope="col" class="n">Duplicates</th>
       <th scope="col" class="n">Conflicts</th><th scope="col" class="n">Twins</th>
     </tr></thead>
@@ -23,7 +23,7 @@
     <tr>
       <th scope="row">{{ s.source }}</th>
       <td>{% if s.source in stale %}<span class="tag gap">stale</span>{% else %}fresh{% endif %}</td>
-      <td>{{ stamp(s.last_deliver_at) }}</td>
+      <td>{{ stamp(s.last_data_at) }}</td>
       <td>{{ stamp(s.last_ingest_at) }}</td>
       {% for k in ("received", "duplicates", "conflicts", "twins") %}<td class="n">{{ s.counters.get(k, 0) }}</td>{% endfor %}
     </tr>

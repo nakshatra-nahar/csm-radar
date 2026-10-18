@@ -554,6 +554,20 @@ def test_a_still_queued_sweep_takes_the_newest_period(world):
     assert [q["payload"] for q in queued] == [{"period": MONDAY.date().isoformat()}]
 
 
+def test_an_absorbed_bootstrap_sweep_keeps_its_flag(world):
+    """Ruling BJ: absorbing a newer period merges it into the queued payload, so a bootstrap
+    sweep still queued when the local day turns still opens the backlog past the breaker."""
+    sunday = datetime(2026, 10, 25, 6, tzinfo=UTC)
+    with world.db.system_tx() as conn:
+        jobs.enqueue(conn, "daily_sweep", TALLY, {"period": "2026-10-25", "bootstrap": True},
+                     dedupe_key="daily_sweep", lane=1, run_at=sunday)
+    worker.schedule(world.db, MONDAY)
+    queued = rows(world.owner, "SELECT payload FROM jobs WHERE kind = 'daily_sweep'"
+                  " AND status = 'queued' AND tenant_id = %s", TALLY)
+    assert [q["payload"] for q in queued] == [{"period": MONDAY.date().isoformat(),
+                                               "bootstrap": True}]
+
+
 def test_unowned_overdue_case_goes_to_the_admin_digest(world):
     bootstrap_sweep(world.db, T0)
     drain(world.db, T0)

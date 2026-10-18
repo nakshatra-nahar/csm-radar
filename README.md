@@ -472,7 +472,7 @@ no organisation; Radar does not guess a match for either.
   rules and the Book page, not by model slots.
 - **Calibration is borderline.** Scored as training deploys it (Platt step included), every
   billing segment in the backtest sits just under ECE 0.02 (hearthline 0.020 yearly and
-  monthly; tallyworks 0.020 and 0.017). Platt is fitted and judged on the same latest 8
+  0.019 monthly; tallyworks 0.020 and 0.017). Platt is fitted and judged on the same latest 8
   matured weeks. The measured database's tallyworks model was trained before Platt had to
   lower the worst segment's error: it carries a pair the current check rejects (yearly ECE
   0.030 to 0.037 on its slice), so a fresh bootstrap deploys it without one.

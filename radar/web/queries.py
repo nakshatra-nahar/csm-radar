@@ -11,6 +11,7 @@ import pandas as pd
 from radar import clock, model, policy, registry, scoring
 from radar.agent import brief
 from radar.agent.evidence import EXACT_METHODS, describe, money
+from radar.agent.handlers import SOURCES_SQL
 from radar.agent.llm import TOKENS_SQL
 
 TIMELINE_ITEMS = 40
@@ -32,9 +33,10 @@ def week_start(tz: str) -> date:
 
 
 def freshness(conn) -> list[dict]:
-    """Each source's latest delivery, stale while its source_stale incident is open."""
+    """Each source's last data as freshness judges it, stale while its source_stale incident
+    is open."""
     return conn.execute(
-        "SELECT s.source, s.last_deliver_at, i.id IS NOT NULL AS stale FROM source_status s"
+        f"SELECT s.source, s.last_data_at, i.id IS NOT NULL AS stale FROM ({SOURCES_SQL}) s"
         " LEFT JOIN incidents i ON i.kind = 'source_stale' AND i.source = s.source"
         " AND i.closed_at IS NULL ORDER BY s.source").fetchall()
 
@@ -252,7 +254,7 @@ def former_reports(conn, manager_id: UUID) -> set:
 # --- ops page (admin) -----------------------------------------------------------------------
 
 OPS = {
-    "sources": "SELECT * FROM source_status ORDER BY source",
+    "sources": SOURCES_SQL + " ORDER BY source",
     "quarantine": "SELECT reason, count(*) AS n FROM quarantine WHERE resolved_at IS NULL"
                   " GROUP BY reason ORDER BY n DESC, reason",
     "links": "SELECT method, count(*) AS n, count(*)::float8 / sum(count(*)) OVER () AS share"
