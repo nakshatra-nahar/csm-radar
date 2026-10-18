@@ -108,7 +108,8 @@ def _breaker(conn, tenant_id, now: datetime, cfg: dict) -> tuple[int, float, flo
     rows = conn.execute(
         "SELECT floor(extract(epoch FROM %(now)s - opened_at) / 86400)::int AS day,"
         " count(*) AS n FROM cases WHERE tenant_id = %(t)s AND kind = ANY(%(kinds)s)"
-        " AND opened_at <= %(now)s AND opened_at > %(now)s - interval '29 days' GROUP BY 1",
+        " AND opened_by NOT LIKE 'bootstrap:%%' AND opened_at <= %(now)s"
+        " AND opened_at > %(now)s - interval '29 days' GROUP BY 1",
         {"now": now, "t": tenant_id, "kinds": MUST_ACT}).fetchall()
     per_day = {r["day"]: r["n"] for r in rows}
     median = statistics.median(per_day.get(d, 0) for d in range(1, 29))
@@ -117,15 +118,19 @@ def _breaker(conn, tenant_id, now: datetime, cfg: dict) -> tuple[int, float, flo
 
 
 def open_cases(conn, tenant_id, hits: list[RuleHit], run_or_event: str, now: datetime,
-               cfg: dict) -> list[UUID]:
+               cfg: dict, breaker: bool = True) -> list[UUID]:
     """Open a case per hit unless one is live (idempotent). Past the circuit breaker's
     threshold new cases open as held, with one circuit_breaker incident. A new must-act
-    lifts the account's suppressions. Returns the new case ids."""
+    lifts the account's suppressions. Returns the new case ids.
+
+    breaker=False is the bootstrap backlog (Ruling AB): every case opens, marked
+    'bootstrap:' so the breaker's later counts leave it out (it is not a storm)."""
     recent, median, threshold = _breaker(conn, tenant_id, now, cfg)
+    opened_by = run_or_event if breaker else "bootstrap:" + run_or_event
     new, held = [], 0
     for h in hits:
-        status = "open" if recent < threshold else "held"
-        case = _insert_case(conn, h.account_id, h.rule, status, h.play, run_or_event, now,
+        status = "open" if not breaker or recent < threshold else "held"
+        case = _insert_case(conn, h.account_id, h.rule, status, h.play, opened_by, now,
                             h.sla_days, h.evidence_ids, cfg)
         if case is None:
             continue
@@ -203,13 +208,20 @@ def freeze_worklists(conn, tenant_id, run_id, week_start: date, now: datetime,
             continue
         book = {s["account_id"]: s for s in scores if s["owner_user_id"] == user["id"]}
         must = conn.execute(
-            "SELECT id, account_id, kind FROM cases WHERE account_id = ANY(%s)"
-            " AND kind = ANY(%s) AND status = 'open' ORDER BY sla_due_at, opened_at",
-            (list(book), MUST_ACT)).fetchall()
-        # every must-act is listed; those beyond K are flagged for the team page
-        listed = [(c["account_id"], "must_act", ("overflow:" if i >= k else "") + c["kind"],
-                   c["id"]) for i, c in enumerate(must)]
-        seen = {a for a, *_ in listed}
+            "SELECT id, account_id, kind, status FROM cases WHERE account_id = ANY(%s)"
+            " AND kind = ANY(%s) AND status IN ('open', 'held')"
+            " ORDER BY sla_due_at, opened_at, array_position(%s, kind)",
+            (list(book), MUST_ACT, MUST_ACT)).fetchall()
+        # one item per account (its soonest-due open must-act) and every such account is
+        # listed; those beyond K are flagged for the team page
+        first: dict = {}
+        for c in must:
+            if c["status"] == "open":
+                first.setdefault(c["account_id"], c)
+        listed = [(a, "must_act", ("overflow:" if i >= k else "") + c["kind"], c["id"])
+                  for i, (a, c) in enumerate(first.items())]
+        # a held must-act is not listed, but its account takes no model slot either
+        seen = {c["account_id"] for c in must}
         blind = sorted((s for s in book.values() if s["account_id"] not in seen
                         and s["coverage_ok"] is False and s["term_end"] is not None
                         and s["term_end"] <= s["as_of"] + timedelta(days=CHECK_IN_DAYS)),

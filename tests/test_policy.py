@@ -208,6 +208,30 @@ def test_overflow_flagged_when_must_acts_exceed_k(owner_conn, worker_db, book):
     assert ["overflow" in i["reason"] for i in got] == [False, False, True]
 
 
+def test_account_with_two_must_acts_is_listed_once(owner_conn, worker_db, book):
+    """worklist_items holds one row per account: the soonest-due must-act stands for it."""
+    tid, csm, make_accounts = book
+    (account,) = make_accounts(1)
+    open_cases(worker_db, tid, [hit(account, "cancel_announced"), hit(account)], NOW)
+    run = make_run(owner_conn, tid, csm, NOW, [{"account": account, "rank": 1}])
+    freeze(worker_db, tid, run, NOW)
+    got = items(owner_conn, tid, csm, NOW.date())
+    assert [(i["kind"], i["reason"]) for i in got] == [("must_act", "cancel_announced")]
+
+
+def test_held_must_act_account_takes_no_model_slot(owner_conn, worker_db, book):
+    """A held case is still a must-act fact on the account: a model slot would list it
+    twice once the admin releases the held case."""
+    tid, csm, make_accounts = book
+    held, other = make_accounts(2)
+    open_cases(worker_db, tid, [hit(held)], NOW, CFG | {"breaker": {"min": 0, "multiple": 0}})
+    run = make_run(owner_conn, tid, csm, NOW, [{"account": held, "rank": 1},
+                                               {"account": other, "rank": 2}])
+    freeze(worker_db, tid, run, NOW)
+    assert [(i["kind"], i["account_id"]) for i in items(owner_conn, tid, csm, NOW.date())] == [
+        ("model", other)]
+
+
 def suppress(owner_conn, tid, account, p):
     owner_conn.execute("INSERT INTO suppressions (tenant_id, account_id, reason, p_at_dismiss,"
                        " created_at) VALUES (%s, %s, 'already handled', %s, %s)",
