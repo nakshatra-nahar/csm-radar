@@ -561,3 +561,17 @@ def test_template_brief_uses_plain_labels_and_display_rounding():
     [change] = [d for _, kind, d in evidence._score_items("Acme", SCORE, real, "USD")
                 if kind == "change"]
     assert change == "days since customer email moved from 30 to 120 since the previous run"
+
+
+def test_evidence_dates_are_the_tenant_local_day():
+    """An evening Pacific-time event is the next day in UTC; the pack and the timeline say
+    the tenant's day, which is what a CSM or customer means by 'on <date>'."""
+    from zoneinfo import ZoneInfo
+
+    from radar.web.auth import templates
+    la = ZoneInfo("America/Los_Angeles")
+    evening = datetime(2026, 10, 17, 3, tzinfo=UTC)  # 20:00 PDT on Oct 16
+    text, _ = evidence.describe(_event("crm.account") | {"occurred_at": evening}, "USD", tz=la)
+    assert text == "CRM account updated on 2026-10-16"
+    day = templates.env.get_template("macros.html").module.day
+    assert str(day(evening, la)) == "2026-10-16" and str(day(evening)) == "2026-10-17"

@@ -11,6 +11,7 @@
 {% if x is none %}—{% else %}{{ fmt.format(x) }}{% endif %}
 {%- endmacro %}
 
-{% macro day(at) -%}
-{% if at is none %}—{% else %}{{ at.strftime('%Y-%m-%d') }}{% endif %}
+{# tz: the tenant's ZoneInfo, for its local day; without it the UTC day #}
+{% macro day(at, tz=none) -%}
+{% if at is none %}—{% else %}{{ (at.astimezone(tz) if tz else at).strftime('%Y-%m-%d') }}{% endif %}
 {%- endmacro %}

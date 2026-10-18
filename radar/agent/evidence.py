@@ -5,8 +5,9 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from radar import asof, clock, features, policy, registry, scoring
 
@@ -106,12 +107,12 @@ def _label(e: dict, currency: str) -> tuple[str, str]:
 
 
 def describe(e: dict, currency: str, cap: int | None = TEXT_CAP,
-             dated: bool = True) -> tuple[str, str]:
+             dated: bool = True, tz: tzinfo = UTC) -> tuple[str, str]:
     """(display, trust) for one event; ticket text is the customer's and is never trusted.
     cap=None keeps the whole (redacted) ticket text; dated=False leaves the date out, for the
-    timeline, which shows it in its own column."""
+    timeline, which shows it in its own column. The date is the tenant's local day (tz)."""
     a = e["attrs"]
-    on = f" on {e['occurred_at'].date().isoformat()}" if dated else ""
+    on = f" on {_day(e['occurred_at'], tz)}" if dated else ""
     if e["type"] == "support.ticket":
         text = redact(f"{a.get('subject', '')}: {a.get('description_excerpt', '')}")
         return f"{_ticket(e)}{on}: {text}"[:cap], "untrusted_customer_text"
@@ -144,19 +145,22 @@ def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[t
     return out
 
 
-def _ledger(conn, account_id) -> dict:
+def _ledger(conn, account_id, tz: str) -> dict:
+    """Open cases, the last outcomes and live suppressions, dated by the tenant's local day."""
     def q(sql):
         return [{k: str(v) if v is not None else None for k, v in r.items()}
-                for r in conn.execute(sql, (account_id,)).fetchall()]
+                for r in conn.execute(sql, {"a": account_id, "tz": tz}).fetchall()]
     return {
-        "open_cases": q("SELECT kind, status, opened_at::date AS opened, sla_due_at::date AS"
-                        " sla_due FROM cases WHERE account_id = %s AND status IN ('open', 'held')"
+        "open_cases": q("SELECT kind, status, (opened_at AT TIME ZONE %(tz)s)::date AS opened,"
+                        " (sla_due_at AT TIME ZONE %(tz)s)::date AS sla_due FROM cases"
+                        " WHERE account_id = %(a)s AND status IN ('open', 'held')"
                         " ORDER BY opened_at, kind"),
-        "last_outcomes": q("SELECT kind, outcome, closed_at::date AS closed FROM cases"
-                           " WHERE account_id = %s AND outcome IS NOT NULL"
+        "last_outcomes": q("SELECT kind, outcome, (closed_at AT TIME ZONE %(tz)s)::date AS"
+                           " closed FROM cases WHERE account_id = %(a)s AND outcome IS NOT NULL"
                            " ORDER BY closed_at DESC LIMIT 3"),
-        "suppressions": q("SELECT reason, created_at::date AS since FROM suppressions"
-                          " WHERE account_id = %s AND lifted_at IS NULL ORDER BY created_at")}
+        "suppressions": q("SELECT reason, (created_at AT TIME ZONE %(tz)s)::date AS since"
+                          " FROM suppressions WHERE account_id = %(a)s AND lifted_at IS NULL"
+                          " ORDER BY created_at")}
 
 
 # --- the events behind a model score (Ruling AC) -------------------------------------------
@@ -169,8 +173,9 @@ PER_FEATURE, FEATURE_ITEMS = 3, 10
 DAY = timedelta(days=1)
 
 
-def _day(at) -> str:
-    return at.date().isoformat()
+def _day(at, tz: tzinfo = UTC) -> str:
+    """The local calendar day of a timestamp (sessions read timestamptz in UTC)."""
+    return at.astimezone(tz).date().isoformat()
 
 
 def _of(rows: list[dict], type_: str) -> list[dict]:
@@ -212,7 +217,8 @@ def _usage(rows, ctx):
 def _open_urgent(rows, ctx):
     t = [r for r in _current(_of(rows, "support.ticket"))
          if r["status"] in features.OPEN and r["priority"] in features.URGENT]
-    return [(r, f"{_ticket(r)} opened on {_day(r['ticket_created_at'] or r['occurred_at'])}")
+    return [(r, f"{_ticket(r)} opened on"
+                f" {_day(r['ticket_created_at'] or r['occurred_at'], ctx['tz'])}")
             for r in sorted(t, key=lambda r: (r["occurred_at"], r["id"]), reverse=True)]
 
 
@@ -226,7 +232,7 @@ def _friction(rows, ctx):
         if (reopened or r["csat"] == "bad") and r["occurred_at"] > ctx["as_of"] - 90 * DAY:
             what = "reopened" if reopened else "rated bad"
             hits[r["entity_id"]] = (r, f"Ticket {r['attrs'].get('ticket_id')} {what} on"
-                                       f" {_day(r['occurred_at'])}")
+                                       f" {_day(r['occurred_at'], ctx['tz'])}")
     return sorted(hits.values(), key=lambda h: (h[0]["occurred_at"], h[0]["id"]), reverse=True)
 
 
@@ -239,7 +245,7 @@ def _last_email(rows, ctx):
     r = max(inbound, key=lambda r: (r["occurred_at"], r["id"]))
     title = ctx["titles"].get((r["attrs"].get("from") or "").lower())
     role = f"their {redact(title)[:60]}" if title else "a contact"
-    return [(r, f"Last customer email on {_day(r['occurred_at'])}, from {role}")]
+    return [(r, f"Last customer email on {_day(r['occurred_at'], ctx['tz'])}, from {role}")]
 
 
 def _integration(rows, ctx):
@@ -249,7 +255,7 @@ def _integration(rows, ctx):
     if not e or e[-1]["product_event"] not in features.BROKEN:
         return []
     what = e[-1]["product_event"].removeprefix("integration_").replace("_", " ")
-    return [(e[-1], f"Integration reported {what} on {_day(e[-1]['occurred_at'])}")]
+    return [(e[-1], f"Integration reported {what} on {_day(e[-1]['occurred_at'], ctx['tz'])}")]
 
 
 def _seat_change(rows, ctx):
@@ -259,7 +265,7 @@ def _seat_change(rows, ctx):
         if prev is not None and r["quantity"] != prev and (
                 r["occurred_at"] > ctx["as_of"] - 180 * DAY):
             changes.append((r, f"Subscription seats changed from {prev} to {r['quantity']}"
-                               f" on {_day(r['occurred_at'])}"))
+                               f" on {_day(r['occurred_at'], ctx['tz'])}"))
         before[r["entity_id"]] = r["quantity"]
     return sorted(changes, key=lambda c: (c[0]["occurred_at"], c[0]["id"]), reverse=True)
 
@@ -269,6 +275,7 @@ def _contract_start(rows, ctx):
     if not subs:
         return []
     r = min(subs, key=lambda r: (r["start_date"], r["id"]))
+    # start_date is a calendar date stored as UTC midnight: its UTC day is the date
     return [(r, f"Contract started on {_day(r['start_date'])}")]
 
 
@@ -296,7 +303,7 @@ FEATURE_EVENTS = (
     " ORDER BY e.entity_id, e.occurred_at, e.version_key, e.id")
 
 
-def _feature_events(conn, account_id, score: dict, now) -> list[tuple[dict, str]]:
+def _feature_events(conn, account_id, score: dict, now, tz: tzinfo) -> list[tuple[dict, str]]:
     """The events behind the score's top behavioural contributions, as they stood at its run's
     as_of: at most PER_FEATURE per feature and FEATURE_ITEMS in all, by contribution. Each
     row's method and link_account are the link usable now (Ruling AF), as for case events."""
@@ -307,7 +314,7 @@ def _feature_events(conn, account_id, score: dict, now) -> list[tuple[dict, str]
                                          "types": SHOWN_TYPES}).fetchall()
     mark = conn.execute("SELECT watermarks->>'product' AS m FROM score_runs WHERE id = %s",
                         (score["run_id"],)).fetchone()["m"]
-    ctx = {"as_of": as_of, "product_mark": mark and datetime.fromisoformat(mark),
+    ctx = {"as_of": as_of, "tz": tz, "product_mark": mark and datetime.fromisoformat(mark),
            "titles": {r["email"].lower(): r["title"] for r in conn.execute(
                "SELECT email, title FROM contacts WHERE account_id = %s AND email IS NOT NULL"
                " AND title IS NOT NULL", (account_id,))}}
@@ -330,7 +337,7 @@ def build_pack(conn, tenant_id: UUID, case_id: UUID) -> EvidencePack:
     now = clock.now()
     case = conn.execute("SELECT * FROM cases WHERE id = %s", (case_id,)).fetchone()
     tenant = conn.execute("SELECT config FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
-    currency = tenant["config"]["currency"]
+    currency, tz = tenant["config"]["currency"], ZoneInfo(tenant["config"]["timezone"])
     account = conn.execute("SELECT name, segment FROM accounts WHERE id = %s",
                            (case["account_id"],)).fetchone()
     score = conn.execute("SELECT * FROM latest_scores WHERE account_id = %s",
@@ -349,9 +356,9 @@ def build_pack(conn, tenant_id: UUID, case_id: UUID) -> EvidencePack:
              in enumerate(_score_items(account["name"], score, changes, currency), start=1)]
     shown = [(e, None) for e in events]
     if case["kind"] == "model_topk" and score:
-        shown = _feature_events(conn, case["account_id"], score, now) + shown
+        shown = _feature_events(conn, case["account_id"], score, now, tz) + shown
     for e, display in shown:
-        display, trust = (display, "system") if display else describe(e, currency)
+        display, trust = (display, "system") if display else describe(e, currency, tz=tz)
         # safe only if an exact key links the item to this case's own account right now
         safe = e["method"] in EXACT_METHODS and e["link_account"] == case["account_id"]
         items.append(EvidenceItem(f"E{len(items) + 1}", e["source"], e["type"].split(".")[1],
@@ -361,4 +368,4 @@ def build_pack(conn, tenant_id: UUID, case_id: UUID) -> EvidencePack:
         score={k: score.get(k) for k in ("band", "p", "lift", "rank_in_book")},
         changes=[i.id for i in items if i.kind == "change"],
         play=case["play"] or policy.choose_play(case["kind"], score.get("contributions") or {}),
-        items=items, ledger=_ledger(conn, case["account_id"]))
+        items=items, ledger=_ledger(conn, case["account_id"], tenant["config"]["timezone"]))

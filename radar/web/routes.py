@@ -2,6 +2,7 @@
 rbac.authorize inside the user's tenant_tx; anything not allowed is a 404."""
 
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -78,7 +79,7 @@ def _account_page(request: Request, user: dict, account_id: UUID, recompute=None
         if changes:
             changes["material"] = scoring.material(changes["changed_features"], currency)
         ctx = {"tenant": tenant, "account": account, "score": score, "currency": currency,
-               "model": queries.active_model(conn),
+               "tz": ZoneInfo(tenant["timezone"]), "model": queries.active_model(conn),
                "changes": changes,
                "why": queries.why(score and score["contributions"]),
                "timeline": queries.timeline(conn, account_id, score and score["as_of"],
