@@ -113,18 +113,18 @@ def book(owner_conn, tenant):
     csm = owner_conn.execute("SELECT id FROM users WHERE tenant_id = %s AND role = 'csm'"
                              " ORDER BY email LIMIT 1", (tid,)).fetchone()["id"]
 
-    def make_accounts(n):
+    def make_accounts(n, owner=csm):
         return [owner_conn.execute(
             "INSERT INTO accounts (tenant_id, sf_account_id, name, owner_user_id)"
             " VALUES (%s, %s, 'acct', %s) RETURNING id",
-            (tid, uuid4().hex[:18], csm)).fetchone()["id"] for _ in range(n)]
+            (tid, uuid4().hex[:18], owner)).fetchone()["id"] for _ in range(n)]
     return tid, csm, make_accounts
 
 
 def make_run(owner_conn, tid, csm, as_of, rows):
     """A done run with one account_scores row per dict: account, rank (None: ineligible),
-    p (None: no model), lift (default 1.0, the slot floor), rules_score (default 0),
-    coverage (default True), term_end (default as_of + 300 days)."""
+    p (None: no model), lift (default 1.0), rules_score (default 0), arr (default 100000),
+    owner (default csm), coverage (default True), term_end (default as_of + 300 days)."""
     run = owner_conn.execute(
         "INSERT INTO score_runs (tenant_id, trigger, actionable, as_of, config_version,"
         " status, started_at) VALUES (%s, 'sweep', true, %s, 1, 'done', %s) RETURNING id",
@@ -136,10 +136,11 @@ def make_run(owner_conn, tid, csm, as_of, rows):
             "INSERT INTO account_scores (tenant_id, run_id, account_id, as_of, eligible, p,"
             " lift, rules_score, rank_in_book, owner_user_id, arr_minor,"
             " expected_arr_at_risk_minor, contributions, context, coverage) VALUES (%s, %s,"
-            " %s, %s, %s, %s, %s, %s, %s, %s, 100000, %s, %s, %s, %s)",
+            " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (tid, run, r["account"], as_of, r.get("rank") is not None, p,
              None if p is None else r.get("lift", 1.0), r.get("rules_score", 0.0),
-             r.get("rank"), csm, None if p is None else round(p * 100000),
+             r.get("rank"), r.get("owner", csm), r.get("arr", 100000),
+             None if p is None else round(p * r.get("arr", 100000)),
              Jsonb({"usage_drop": 0.5}),
              Jsonb({"term_end": term_end.isoformat()}), Jsonb({"ok": r.get("coverage", True)})))
     return run
@@ -235,27 +236,52 @@ def test_held_must_act_account_takes_no_model_slot(owner_conn, worker_db, book):
         ("model", other)]
 
 
-def test_model_slots_need_lift_at_the_floor(owner_conn, worker_db, book):
-    """Ruling AP: capacity is a cap, not a quota. A book whose other accounts sit below the
-    tenant base rate (lift < min_slot_lift) gets fewer than K model slots."""
+def test_a_low_risk_book_gets_fewer_model_slots(owner_conn, worker_db, book):
+    """Ruling AZ: capacity is a cap. A model slot needs a ranking key (p * arr) at least
+    min_slot_lift x the tenant's mean key over eligible accounts, so a book whose keys sit
+    below that gets fewer than K; another CSM's high-risk book raises the mean."""
     tid, csm, make_accounts = book
-    accts = make_accounts(4)
+    other_csm = owner_conn.execute("SELECT id FROM users WHERE tenant_id = %s AND role = 'csm'"
+                                   " AND id <> %s ORDER BY email LIMIT 1",
+                                   (tid, csm)).fetchone()["id"]
+    mine, (theirs,) = make_accounts(3), make_accounts(1, owner=other_csm)
+    # every p in my book is above the mean p (lift 1.2), but the keys are 60000, 9000, 9000
+    # against their 100000: tenant mean key 44500
     run = make_run(owner_conn, tid, csm, NOW, [
-        {"account": a, "rank": i + 1, "lift": lift}
-        for i, (a, lift) in enumerate(zip(accts, [2.0, 1.0, 0.99, 0.5], strict=True))])
+        {"account": a, "rank": i + 1, "p": 0.3, "lift": 1.2, "arr": arr}
+        for i, (a, arr) in enumerate(zip(mine, [200000, 30000, 30000], strict=True))]
+        + [{"account": theirs, "rank": 1, "p": 0.1, "lift": 0.4, "arr": 1000000,
+            "owner": other_csm}])
     assert CFG["min_slot_lift"] == 1.0
     freeze(worker_db, tid, run, NOW)  # K = 10
-    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == accts[:2]
+    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == mine[:1]
+    assert [i["account_id"] for i in items(owner_conn, tid, other_csm, NOW.date())] == [theirs]
 
 
-def test_without_a_model_slots_need_rules_score_at_yellow(owner_conn, worker_db, book):
+def test_large_account_with_below_average_p_keeps_its_slot(owner_conn, worker_db, book):
+    """The floor is on expected ARR at risk, not on lift: a big account with p under the
+    tenant mean p but a key above the mean key keeps its slot."""
+    tid, csm, make_accounts = book
+    big, small, tiny = make_accounts(3)
+    # p 0.05, 0.4, 0.1 (mean 0.183: big has lift 0.27); keys 50000, 40000, 10000 (mean 33333)
+    run = make_run(owner_conn, tid, csm, NOW, [
+        {"account": big, "rank": 1, "p": 0.05, "lift": 0.27, "arr": 1000000},
+        {"account": small, "rank": 2, "p": 0.4, "lift": 2.18},
+        {"account": tiny, "rank": 3, "p": 0.1, "lift": 0.55}])
+    freeze(worker_db, tid, run, NOW)
+    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == [big, small]
+
+
+def test_without_a_model_the_floor_is_on_rules_score_times_arr(owner_conn, worker_db, book):
+    """Without a model the key is rules_score * arr, and the same floor applies to it."""
     tid, csm, make_accounts = book
     accts = make_accounts(3)
+    # keys 300000, 150000, 100000: mean 183333
     run = make_run(owner_conn, tid, csm, NOW, [
         {"account": a, "rank": i + 1, "p": None, "rules_score": r}
         for i, (a, r) in enumerate(zip(accts, [3.0, 1.5, 1.0], strict=True))])
     freeze(worker_db, tid, run, NOW)
-    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == accts[:2]
+    assert [i["account_id"] for i in items(owner_conn, tid, csm, NOW.date())] == accts[:1]
 
 
 def suppress(owner_conn, tid, account, p):
@@ -266,15 +292,17 @@ def suppress(owner_conn, tid, account, p):
 
 def test_suppressed_account_returns_only_on_material_increase(owner_conn, worker_db, book):
     tid, csm, make_accounts = book
-    top, other, acted = make_accounts(3)
+    top, other, acted, filler = make_accounts(4)
     suppress(owner_conn, tid, top, 0.25)
     suppress(owner_conn, tid, acted, 0.5)
     cfg = CFG | {"capacity_per_csm": 1}
     slots = []
     for week, p in enumerate([0.30, 0.3499, 0.35]):  # +0.10 is material, +0.0999 is not
         now = NOW + week * WEEK
+        # filler keeps other's key above the tenant mean key (the slot floor)
         run = make_run(owner_conn, tid, csm, now, [{"account": top, "rank": 1, "p": p},
-                                                   {"account": other, "rank": 2, "p": 0.2}])
+                                                   {"account": other, "rank": 2, "p": 0.2},
+                                                   {"account": filler, "rank": 3, "p": 0.0}])
         freeze(worker_db, tid, run, now, cfg)
         slots.append(items(owner_conn, tid, csm, now.date())[0]["account_id"])
     assert slots == [other, other, top]

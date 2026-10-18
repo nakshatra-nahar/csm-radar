@@ -290,7 +290,7 @@ Missing-data semantics:
 - `worklist` v1 (per CSM per ISO week, frozen in the Monday sweep):
   1. All open must-act cases. If they exceed K, the overflow is flagged on the team page.
   2. Up to 2 `renewal_blind_spot` check-ins: accounts with Unknown coverage and term end <= 90 days.
-  3. Model slots `max(0, K - |1| - |2|)`, ranked by expected ARR at risk (`p * arr`) among eligible, unsuppressed accounts with lift >= `min_slot_lift` (tenant config, 1.0: at or above the base rate; without a model, rules_score at the yellow cut). Capacity is a cap, not a quota: a healthy book gets a shorter list. The backtest applies the same floor.
+  3. Model slots `max(0, K - |1| - |2|)`, ranked by expected ARR at risk (`p * arr`; without a model, `rules_score * arr`) among eligible, unsuppressed accounts whose key is at least `min_slot_lift` x the tenant's mean key over eligible accounts at the run (tenant config, 1.0: expected ARR at risk relative to the tenant mean). Capacity is a cap, not a quota: a healthy book gets a shorter list. The floor is monotone in the ranking key, so every list is a prefix of its book's ranking: it can shorten a list, never reorder it or substitute a smaller account (Ruling AZ). The backtest applies the same floor, with the mean over its labelled test rows.
 
   K is in tenant config (default 10).
   - Mid-week, new must-act cases are appended with a "new since Monday" mark and the list is never re-sorted.

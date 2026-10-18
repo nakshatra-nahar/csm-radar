@@ -84,7 +84,8 @@ def score_frame(frames: Frames, tenant: dict, as_of: datetime, artifact: dict | 
     df["lift"], df["band"] = lift_and_band(df["p"], eligible, df.index.isin(must_act),
                                            df["coverage_ok"], df["rules_score"],
                                            tenant["config"])
-    key = (df["p"] if artifact is not None else df["rules_score"]) * df["arr_minor"]
+    key = policy.slot_key(None if artifact is None else df["p"], df["rules_score"],
+                          df["arr_minor"])
     ranked = eligible & key.notna()  # only these get a rank; the rest stay NaN
     df["rank_in_book"] = policy.rank_in_book(key[ranked], df.loc[ranked, "arr_minor"],
                                              df.loc[ranked, "owner_user_id"])

@@ -64,14 +64,13 @@ def topk_by_book(df: pd.DataFrame, score_col: str, k: int,
 
 
 def slot_floor(t: pd.DataFrame, col: str, cfg: dict) -> pd.Series:
-    """policy.slot_floor on backtest rows: the rules heuristic needs rules_score at the yellow
-    cut; a probability column needs lift, p over the week's mean p, at min_slot_lift.
+    """policy.slot_floor on backtest rows: the ranking key (col * arr_minor) at least
+    min_slot_lift x that week's mean key, for every scored policy.
     shortcut: the mean is over the labelled test rows, not every eligible account as in
-    scoring (label_rows drops accounts whose decision is visible); use the served lift if
+    scoring (label_rows drops accounts whose decision is visible); use the served rows if
     that gap ever matters."""
-    if col == "rules":
-        return t[col] >= policy.slot_floor(cfg, has_model=False)
-    return t[col] / t.groupby("as_of")[col].transform("mean") >= policy.slot_floor(cfg, True)
+    key = t[col] * t["arr_minor"]
+    return key >= key.groupby(t["as_of"]).transform(policy.slot_floor, cfg)
 
 
 def _weekly_mean(num: pd.Series, den: pd.Series, week: pd.Series) -> float:
@@ -205,7 +204,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     t["w_renewal_sort"] = _rank(t, t["renewal"]) <= k
     t["w_arr_sort"] = _rank(t, arr) <= k
     scores = {"renewal_sort": t["renewal"], "arr_sort": arr}
-    for p in ("rules", "model", "oracle", "gbm", "naive", *(f"without_{g}" for g in GROUPS),
+    for p in ("rules", "model", "oracle", "gbm", "naive", "hindsight",
+              *(f"without_{g}" for g in GROUPS),
               *(f"c_{c}" for c in C_GRID)):
         if p in t:
             t[f"w_{p}"] = topk_by_book(t, p, k, slot_floor(t, p, tenant["config"]))
@@ -232,6 +232,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
                              "hindsight_auc": float(roc_auc_score(t["label"], t["hindsight"])),
                              "naive_auc": float(roc_auc_score(t["label"], t["naive"])),
                              "pit_recall_at_k_arr": recall,
+                             "hindsight_recall_at_k_arr": recall_of("hindsight"),
                              "naive_recall_at_k_arr": recall_of("naive")},
         "ablation": {g: {"recall_at_k_arr": a, "delta": a - recall} for g, a in ablated.items()},
         "c_sensitivity": {str(c): recall if c == 1.0 else recall_of(f"c_{c}")
@@ -372,8 +373,9 @@ def _vp_cases(feats: pd.DataFrame, artifacts: dict, accounts: pd.DataFrame, sf: 
               k: int, cfg: dict) -> list[dict]:
     """Each VP account's weekly rank (1 = top) in its owner's book over the 20 weeks before
     its decision, under renewal_sort and the model of the latest origin at or before that
-    week (every origin's training ends long before the decisions). None: not in window;
-    "below floor": lift under the slot floor (Ruling AP), so the model would not serve it."""
+    week (every origin's training ends long before the decisions). None: not in window, or
+    below_floor: its key (p * arr) is under the slot floor (Ruling AZ), so the model would
+    not serve it."""
     by_sf = pd.Series(sf.index, index=sf.to_numpy())
     starts = sorted(artifacts)
     as_of = feats.index.get_level_values("as_of")
@@ -385,15 +387,17 @@ def _vp_cases(feats: pd.DataFrame, artifacts: dict, accounts: pd.DataFrame, sf: 
             book = feats[as_of == T].reset_index()
             book = book[book["eligible"] & ~book["decision_visible"]]
             mine = book["account_id"] == aid
-            week = {"as_of": T, "renewal_sort": None, "model": None, "book_size": None}
+            week = {"as_of": T, "renewal_sort": None, "model": None, "below_floor": False,
+                    "book_size": None}
             if mine.any():
                 artifact = artifacts[max([o for o in starts if o <= T], default=starts[0])]
                 book = book.assign(model=model.predict(artifact, book)[0])
                 key = (book["model"] * book["arr_minor"]).where(slot_floor(book, "model", cfg))
                 renewal = -(book["term_end"] - book["as_of"]).dt.days
                 week["renewal_sort"] = int(_rank(book, renewal)[mine].iloc[0])
-                week["model"] = ("below floor" if key[mine].isna().iloc[0]
-                                 else int(_rank(book, key)[mine].iloc[0]))
+                week["below_floor"] = bool(key[mine].isna().iloc[0])
+                if not week["below_floor"]:
+                    week["model"] = int(_rank(book, key)[mine].iloc[0])
                 owner = book.loc[mine, "owner_user_id"].iloc[0]
                 week["book_size"] = int((book["owner_user_id"] == owner).sum())
             weeks.append(week)
@@ -439,7 +443,8 @@ def acceptance(result: dict) -> list[str]:
 
 SECTIONS = ["Summary", "How it was tested", "Recall@K by policy", "Ranking quality and calibration",
             "Lead time", "Confidence intervals", "Recall by churn cause",
-            "Leakage check: hindsight vs point-in-time", "Ablation: which sources matter",
+            "Leakage check: hindsight, point-in-time and naive current-state",
+            "Ablation: which sources matter",
             "The VP's two lost renewals", "Outage week", "Coefficients",
             "Identity resolution", "Acceptance gates", "Known limits"]
 LABELS = {"random": "Random (K/N per book)", "renewal_sort": "Renewal date (soonest first)",
@@ -471,7 +476,8 @@ def _vp_lines(case: dict, k: int) -> list[str]:
     weeks, decided = case["weeks"], pd.Timestamp(case["decision_at"])
 
     def ranks(policy: str) -> str:
-        return ", ".join("-" if w[policy] is None else str(w[policy]) for w in weeks)
+        return ", ".join("below floor" if policy == "model" and w["below_floor"]
+                         else "-" if w[policy] is None else str(w[policy]) for w in weeks)
 
     def first(policy: str) -> str:
         at = next((w["as_of"] for w in weeks if isinstance(w[policy], int) and w[policy] <= k),
@@ -484,8 +490,8 @@ def _vp_lines(case: dict, k: int) -> list[str]:
     return [f"**{case['name']}** (cause: {case['cause']}) decided {_day(decided)}. Top {k}"
             f" under the model {first('model')}; under renewal sort {first('renewal_sort')}.",
             "", "Weekly rank in the CSM's book over the 20 weeks before the decision (- means"
-            " not yet in the renewal window; below floor means lift under the slot floor, so the"
-            " model would not serve it):", "",
+            " not yet in the renewal window; below floor means its expected ARR at risk is"
+            " under the slot floor, so the model would not serve it):", "",
             f"- renewal sort: {ranks('renewal_sort')}", f"- model: {ranks('model')}", ""]
 
 
@@ -504,7 +510,7 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
         out.extend([f"## {title}", "", *lines, ""])
 
     section("Summary",
-            f"- In an average test week the model's top {k} per CSM held"
+            f"- In an average test week the model's list of up to {k} per CSM held"
             f" {_ci_text(model_recall)} of the ARR that went on to churn within 90 days.",
             f"- Sorting by renewal date held {_pct(p['renewal_sort']['recall_at_k_arr'])}, the"
             f" rules heuristic {_pct(p['rules']['recall_at_k_arr'])} and random picks"
@@ -515,6 +521,8 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
               if p["renewal_sort"]["recall_at_k_arr"] < p["random"]["recall_at_k_arr"] else []),
             f"- Model minus renewal sort: {_ci_text(ci['model_minus_renewal_sort'], True)}."
             f" Model minus rules: {_ci_text(ci['model_minus_rules'], True)}.",
+            *(["- For this tenant the deployed model holds less churned ARR than the rules"
+               " heuristic."] if ci["model_minus_rules"]["diff"] < 0 else []),
             *([f"- An oracle that sees true account health reaches"
                f" {_pct(p['oracle']['recall_at_k_arr'])}: the gap is what better data could"
                " still buy."] if "oracle" in p else []),
@@ -539,10 +547,13 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
     section("Recall@K by policy",
             "Recall (ARR-weighted) and precision are computed each week across every CSM's"
             " book, then averaged over test weeks. Lift is precision over the base rate."
-            " Every policy ranks the same rows. As served, a slot takes only an account at or"
-            " above the slot floor (lift at least min_slot_lift; for the rules heuristic,"
-            " rules_score at the yellow cut), so a book can get fewer than K; random and the"
-            " sorts have no floor.", "",
+            " Every policy ranks the same rows by its expected ARR at risk (score x ARR). As"
+            " served, a slot takes only an account whose key is at least min_slot_lift (1.0)"
+            " x the tenant's mean key that week, so a low-risk book gets fewer than K; the"
+            " floor only shortens a list, never reorders it. Random and the sorts have no"
+            " floor. Here the mean key is over the labelled test rows, which leave out"
+            " accounts whose decision is already visible (a shortcut: the served mean is over"
+            " every eligible account).", "",
             "| policy | recall@K (95% CI) | precision@K | lift | ROC-AUC | PR-AUC | Brier |",
             "|---|---|---|---|---|---|---|",
             *[f"| {LABELS[name]} | {_ci_text(ci['recall'][name])} | {_pct(m['precision_at_k'])}"
@@ -560,7 +571,7 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
               for seg, v in rel.items()])
     section("Lead time",
             f"Of {lead['decisions']} churn decisions in the test weeks, the model flagged"
-            f" {lead['flagged']} (in a top {k} for 2 weeks in a row) before the decision."
+            f" {lead['flagged']} (on its list for 2 weeks in a row) before the decision."
             f" Median lead: {_num(lead['median_weeks'], '.1f')} weeks."
             f" {_pct(lead['share_6w'])} of all decisions were flagged at least 6 weeks ahead."
             " The label horizon caps lead time at about 13 weeks.")
@@ -585,11 +596,12 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
                 f"All unforecastable causes pooled: model {_pct(pooled['recall_at_k_arr'])},"
                 f" random {_pct(pooled['random_recall'])} ({pooled['decisions']} decisions).")
     h = r["hindsight_vs_pit"]
-    section("Leakage check: hindsight vs point-in-time",
+    section("Leakage check: hindsight, point-in-time and naive current-state",
             "| features | recall@K | ROC-AUC |", "|---|---|---|",
             f"| point-in-time (deployed) | {_pct(h['pit_recall_at_k_arr'])} |"
             f" {h['pit_auc']:.3f} |",
-            f"| hindsight: late data arrives on time | | {h['hindsight_auc']:.3f} |",
+            "| hindsight: late data arrives on time |"
+            f" {_pct(h['hindsight_recall_at_k_arr'])} | {h['hindsight_auc']:.3f} |",
             f"| naive current-state: today's Salesforce row | {_pct(h['naive_recall_at_k_arr'])}"
             f" | {h['naive_auc']:.3f} |", "",
             "Hindsight features use every record as if it had arrived when it happened:"
@@ -658,9 +670,9 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             "- Seat changes carry weak signal: seat_change_180d alone has ROC-AUC"
             f" {d['single_auc']['seat_change_180d']:.2f}. usage_drop also moves when a customer"
             " cuts seats, so some seat-cut risk shows up as a usage drop.",
-            "- Capacity is a cap: a slot never goes to an account below the base rate. A large"
-            " account with a low p drops off the list even when its expected ARR at risk"
-            " would rank it in, and a healthy book gets fewer than K.",
+            "- Capacity is a cap: a slot goes only to an account whose expected ARR at risk is"
+            " at least the tenant mean, so a healthy book gets fewer than K. The backtest takes"
+            " that mean over labelled test rows, not every eligible account.",
             "- Gradient boosting is a diagnostic row: does the linear model miss structure? It"
             " has no serving path.",
             "- Causes with few decisions have noisy recall. The world is synthetic: these"

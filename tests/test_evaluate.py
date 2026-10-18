@@ -54,15 +54,39 @@ def test_topk_by_book_leaves_slots_empty_below_the_floor():
     assert evaluate.topk_by_book(df, "score", k=10, floor=floor).tolist() == [True, False, True]
 
 
-def test_slot_floors_match_the_served_rule():
-    """Model-like columns need lift (p over that week's mean p) >= min_slot_lift; the rules
-    heuristic needs rules_score at the yellow band cut."""
+def test_slot_floor_is_on_the_ranking_key():
+    """Ruling AZ: a slot needs its key (score * arr_minor) at least min_slot_lift x that
+    week's mean key, for a probability column and the rules heuristic alike. Row 1 has a
+    below-average p (lift 0.375) but the largest ARR, so it keeps its slot."""
     T1, T2 = pd.Timestamp("2026-01-05", tz="UTC"), pd.Timestamp("2026-01-12", tz="UTC")
-    t = pd.DataFrame({"as_of": [T1, T1, T2, T2], "model": [0.3, 0.1, 0.05, 0.15],
-                      "rules": [1.5, 1.0, 0.0, 3.0]})
+    t = pd.DataFrame({"as_of": [T1, T1, T1, T2, T2], "model": [0.5, 0.1, 0.2, 0.05, 0.15],
+                      "rules": [3.0, 1.0, 0.0, 3.0, 1.5],
+                      "arr_minor": [100, 1000, 100, 100, 100]})
     cfg = runtime_config("hearthline")
-    assert evaluate.slot_floor(t, "model", cfg).tolist() == [True, False, False, True]
-    assert evaluate.slot_floor(t, "rules", cfg).tolist() == [True, False, False, True]
+    # model keys 50, 100, 20 (mean 56.7) | 5, 15; rules keys 300, 1000, 0 (mean 433) | 300, 150
+    assert evaluate.slot_floor(t, "model", cfg).tolist() == [False, True, False, False, True]
+    assert evaluate.slot_floor(t, "rules", cfg).tolist() == [False, True, False, True, False]
+
+
+def test_floored_top_k_is_a_prefix_of_the_ranking():
+    """The floor is monotone in the ranking key, so on any book it only shortens the top K:
+    the floored list is the first n accounts of the unfloored one, never a substitute."""
+    rng = np.random.default_rng(7)
+    cfg = runtime_config("hearthline")
+    weeks = pd.date_range("2026-01-05", periods=3, freq="7D", tz="UTC")
+    for _ in range(50):
+        n = int(rng.integers(5, 60))
+        df = pd.DataFrame({"as_of": rng.choice(weeks, n),
+                           "owner_user_id": rng.choice(list("abcd"), n),
+                           "model": rng.beta(1, 8, n),
+                           "arr_minor": rng.lognormal(10, 1.5, n).round()})
+        rank = evaluate._rank(df, df["model"] * df["arr_minor"])
+        k = int(rng.integers(1, 12))
+        full = evaluate.topk_by_book(df, "model", k)
+        floored = evaluate.topk_by_book(df, "model", k, evaluate.slot_floor(df, "model", cfg))
+        assert not (floored & ~full).any()
+        served = floored.groupby([df["as_of"], df["owner_user_id"]]).transform("sum")
+        assert (floored == (rank <= served)).all()  # the first n of each book's ranking
 
 
 def test_naive_frames_show_todays_salesforce_row_at_every_snapshot():
@@ -102,12 +126,13 @@ def test_current_state_takes_registry_features_from_the_naive_build():
 
 
 def test_vp_ranks_apply_the_slot_floor(monkeypatch):
-    """Ruling AP in the VP narrative: a week where the VP account's lift (p over the book's
-    mean p) is under min_slot_lift gets no model rank, however large its ARR."""
+    """Ruling AZ in the VP narrative: a week where the VP account's key (p * arr) is under
+    min_slot_lift x the book's mean key gets no model rank: null plus below_floor, never a
+    string in the numeric field."""
     T1, T2 = pd.Timestamp("2026-01-05", tz="UTC"), pd.Timestamp("2026-01-12", tz="UTC")
     feats = pd.DataFrame({
         "account_id": ["v", "a", "b"] * 2, "as_of": [T1] * 3 + [T2] * 3,
-        "p": [0.1, 0.3, 0.2, 0.5, 0.3, 0.1], "arr_minor": [1000, 10, 10] * 2,
+        "p": [0.1, 0.3, 0.2, 0.05, 0.3, 0.1], "arr_minor": [10, 10, 10, 1000, 10, 10],
         "owner_user_id": "u", "eligible": True, "decision_visible": False,
         "term_end": pd.Timestamp("2026-06-01", tz="UTC")}).set_index(["account_id", "as_of"])
     monkeypatch.setattr(evaluate.model, "predict", lambda art, X: (X["p"].to_numpy(), None))
@@ -116,7 +141,9 @@ def test_vp_ranks_apply_the_slot_floor(monkeypatch):
     cases = evaluate._vp_cases(feats, {T1: None}, accounts, pd.Series({"v": "V"}), 2,
                                runtime_config("hearthline"))
     weeks = cases[0]["weeks"]
-    assert [w["model"] for w in weeks] == ["below floor", 1]  # T1 lift 0.5; T2 lift 1.67
+    # T1 keys 1, 3, 2 (mean 2); T2 keys 50, 3, 1: low p but the largest key, rank 1
+    assert [w["model"] for w in weeks] == [None, 1]
+    assert [w["below_floor"] for w in weeks] == [True, False]
     assert "below floor" in "\n".join(evaluate._vp_lines(cases[0], 2))
 
 
@@ -238,6 +265,20 @@ def test_naive_current_state_row_shows_the_optimism(eval_result):
     assert h["naive_recall_at_k_arr"] > h["pit_recall_at_k_arr"]
     card = evaluate.render_model_card("hearthline", eval_result)
     assert "naive current-state" in card
+
+
+@pytest.mark.slow
+def test_card_says_so_when_the_model_trails_the_rules(eval_result):
+    """A negative model-minus-rules gets one plain Summary sentence; the hindsight row has its
+    recall@K cell (Task 13a review minors)."""
+    trails = "the deployed model holds less churned ARR than the rules heuristic"
+    ci = eval_result["ci"] | {"model_minus_rules": {"diff": -0.04, "lo": -0.11, "hi": 0.03}}
+    assert trails in evaluate.render_model_card("hearthline", eval_result | {"ci": ci})
+    ci["model_minus_rules"] = {"diff": 0.04, "lo": 0.01, "hi": 0.07}
+    card = evaluate.render_model_card("hearthline", eval_result | {"ci": ci})
+    assert trails not in card
+    h = eval_result["hindsight_vs_pit"]["hindsight_recall_at_k_arr"]
+    assert f"| hindsight: late data arrives on time | {evaluate._pct(h)} |" in card
 
 
 @pytest.mark.slow
