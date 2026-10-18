@@ -81,12 +81,11 @@ def choose_play(kind: str, contributions: dict[str, float]) -> str:
     positive behavioural contribution."""
     if kind in RULE_PLAYS:
         return RULE_PLAYS[kind]
-    behavioural = {d.name: d.source.split("+")[0] for d in registry.FEATURES
-                   if d.kind == "behavioural"}
-    positive = {f: c for f, c in contributions.items() if f in behavioural and c > 0}
-    if not positive:
+    top = registry.top_behavioural(contributions)
+    if not top:
         return NO_SIGNAL_PLAY
-    return SOURCE_PLAYS[behavioural[max(positive, key=positive.get)]]
+    source = {d.name: d.source.split("+")[0] for d in registry.FEATURES}
+    return SOURCE_PLAYS[source[top[0][0]]]
 
 
 def rule_hits(facts: pd.DataFrame, cfg: dict) -> list[RuleHit]:

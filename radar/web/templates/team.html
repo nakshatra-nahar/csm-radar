@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import band as chip, money %}
+{% from "macros.html" import band as chip, count, money %}
 {% block title %}Team{% endblock %}
 {% block content %}
 {% set cur = tenant.currency %}
@@ -27,7 +27,7 @@
   {% else %}
   <ul class="inline renewals">
     {% for b in bands if b in renewals %}
-    <li>{{ chip(b) }} {{ renewals[b].n }} accounts, {{ money(renewals[b].arr, cur) }}</li>
+    <li>{{ chip(b) }} {{ count(renewals[b].n, "account") }}, {{ money(renewals[b].arr, cur) }}</li>
     {% endfor %}
   </ul>
   {% endif %}

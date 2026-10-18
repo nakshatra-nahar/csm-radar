@@ -7,6 +7,10 @@
 {% if minor is none %}—{% else %}{{ currency }} {{ '{:,.0f}'.format(minor / 100) }}{% endif %}
 {%- endmacro %}
 
+{% macro count(n, noun) -%}
+{{ n }} {{ noun }}{{ '' if n == 1 else 's' }}
+{%- endmacro %}
+
 {% macro num(x, fmt='{:.2f}') -%}
 {% if x is none %}—{% else %}{{ fmt.format(x) }}{% endif %}
 {%- endmacro %}

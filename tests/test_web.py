@@ -651,7 +651,7 @@ def _check_team_row(web, wl):
     assert renewals and len(re.findall("<li>", shown)) == len(renewals)
     for r in renewals:
         assert (f'<span class="band band-{r["band"]}">{r["band"].replace("_", " ")}</span>'
-                f' {r["n"]} accounts, {money(r["arr"])}') in shown
+                f' {r["n"]} account{"" if r["n"] == 1 else "s"}, {money(r["arr"])}') in shown
 
 
 def test_team_page_lists_risky_accounts_without_a_working_owner(web):
@@ -995,3 +995,13 @@ def test_tick_worker_pool_takes_the_pgbouncer_setting(web):
             assert conn.prepare_threshold is None
     finally:
         db.close()
+
+
+def test_counts_are_pluralised_and_book_chips_use_plain_labels(web):
+    from radar.web.auth import templates
+    count = templates.env.get_template("macros.html").module.count
+    assert [str(count(n, "account")) for n in (0, 1, 2)] == [
+        "0 accounts", "1 account", "2 accounts"]
+    html = client_as(web, web.csm).get("/book").text
+    chips = re.findall(r'<span class="tag">([^<]+)</span>', html)
+    assert set(chips) & set(registry.LABELS.values()) and not any("_" in c for c in chips)

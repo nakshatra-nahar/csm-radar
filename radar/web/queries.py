@@ -12,7 +12,6 @@ from radar import clock, model, policy, registry, scoring
 from radar.agent import brief
 from radar.agent.evidence import EXACT_METHODS, describe
 
-KINDS = {d.name: d.kind for d in registry.FEATURES}
 TIMELINE_ITEMS = 40
 DRIVER_FLOOR = 0.1  # log-odds: a smaller behavioural term does not explain a model slot
 
@@ -87,12 +86,11 @@ def why_now(conn, row: dict, run_id: UUID, currency: str) -> str | None:
 
 
 def driver(row: dict, currency: str) -> str | None:
-    """The largest behavioural contribution with its value if it reaches DRIVER_FLOOR, else the
+    """The largest behavioural contribution with its value if it exceeds DRIVER_FLOOR, else the
     slot's expected ARR at risk (its sort key); structural terms never headline (Ruling BF)."""
-    up = [(c, f) for f, c in (row["contributions"] or {}).items()
-          if KINDS.get(f) == "behavioural" and c >= DRIVER_FLOOR]
+    up = registry.top_behavioural(row["contributions"], DRIVER_FLOOR)
     if up:
-        c, f = max(up)
+        f, c = up[0]
         return (f"{registry.LABELS[f]}: {registry.shown(f, row['features'].get(f), currency)}"
                 f" ({c:+.2f})")
     at_risk = row.get("expected_arr_at_risk_minor")
@@ -111,9 +109,8 @@ def book(conn, band: str | None) -> list[dict]:
         " ORDER BY s.expected_arr_at_risk_minor DESC NULLS LAST, a.name",
         {"band": band}).fetchall()
     for r in rows:
-        up = [(c, f) for f, c in (r["contributions"] or {}).items()
-              if KINDS.get(f) == "behavioural" and c > 0]
-        r["chips"] = [f for _, f in sorted(up, reverse=True)[:3]]
+        r["chips"] = [registry.LABELS[f] for f, _ in registry.top_behavioural(
+            r["contributions"])[:3]]
     return rows
 
 

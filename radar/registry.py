@@ -66,6 +66,14 @@ FEATURES = [
        "1 if no workspace is linked at T; product features are then imputed by the model"),
 ]
 FEATURE_NAMES = [d.name for d in FEATURES]
+BEHAVIOURAL = frozenset(d.name for d in FEATURES if d.kind == "behavioural")
+
+
+def top_behavioural(contributions: dict | None, floor: float = 0.0) -> list[tuple[str, float]]:
+    """(feature, contribution) of the behavioural terms above floor, largest first (ties by
+    name): what pushes a score up. Structural terms never explain one (Ruling BF)."""
+    return sorted(((n, c) for n, c in (contributions or {}).items()
+                   if n in BEHAVIOURAL and c > floor), key=lambda nc: (-nc[1], nc[0]))
 # What a CSM reads instead of the feature name (pages and briefs)
 LABELS = {
     "usage_drop": "usage drop", "seat_utilization": "seat utilization",

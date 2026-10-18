@@ -136,12 +136,11 @@ def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[t
              f" {c['shown_after']} since the previous run")
             for c in scoring.material(changes["changed_features"], currency)][:TOP]
     # behavioural terms only: structural ones stay collapsed, as in the Why panel (Ruling BF)
-    behavioural = {d.name for d in registry.FEATURES if d.kind == "behavioural"}
-    top = sorted(((n, c) for n, c in (score["contributions"] or {}).items() if n in behavioural),
-                 key=lambda kv: (-kv[1], kv[0]))
     out += [("radar", "contribution", f"{registry.LABELS[name]} is"
              f" {registry.shown(name, score['features'].get(name), currency)} and adds"
-             f" {c:.2f} to the log-odds") for name, c in top if c >= scoring.NEGLIGIBLE][:TOP]
+             f" {c:.2f} to the log-odds")
+            for name, c in registry.top_behavioural(score["contributions"], scoring.NEGLIGIBLE)
+            ][:TOP]
     return out
 
 
@@ -318,11 +317,8 @@ def _feature_events(conn, account_id, score: dict, now, tz: tzinfo) -> list[tupl
            "titles": {r["email"].lower(): r["title"] for r in conn.execute(
                "SELECT email, title FROM contacts WHERE account_id = %s AND email IS NOT NULL"
                " AND title IS NOT NULL", (account_id,))}}
-    behavioural = {d.name for d in registry.FEATURES if d.kind == "behavioural"}
-    top = sorted(((n, c) for n, c in (score["contributions"] or {}).items()
-                  if n in behavioural and c > 0), key=lambda kv: (-kv[1], kv[0]))
     out, seen = [], set()
-    for name, _ in top:
+    for name, _ in registry.top_behavioural(score["contributions"]):
         picked = [(e, d) for e, d in SELECTORS[name](rows, ctx) if e["id"] not in seen]
         for e, d in picked[:PER_FEATURE]:
             seen.add(e["id"])
