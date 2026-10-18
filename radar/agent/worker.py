@@ -32,16 +32,17 @@ def reap(db: Database, now: datetime) -> None:
 
 
 def schedule(db: Database, now: datetime) -> None:
-    """Enqueue each periodic job once per period: feed_tick per UTC minute, sla_check per
-    UTC hour, and each tenant's daily_sweep once its local day reaches sweep_hour_local.
-    A periodic job still queued absorbs the next one (same dedupe key)."""
+    """Enqueue each tenant's periodic jobs once per period: feed_tick per UTC minute,
+    sla_check per UTC hour, and daily_sweep once its local day reaches sweep_hour_local.
+    Per tenant, so one tenant's failure leaves the others' work running. A periodic job
+    still queued absorbs the next one (same dedupe key)."""
     utc = now.astimezone(UTC)
     with db.system_tx() as conn:
-        for kind, period in (("feed_tick", f"{utc:%Y-%m-%dT%H:%M}"),
-                             ("sla_check", f"{utc:%Y-%m-%dT%H}")):
-            if jobs.once_per_period(conn, None, kind, period):
-                jobs.enqueue(conn, kind, None, {}, dedupe_key=kind, lane=0, run_at=now)
         for t in conn.execute("SELECT id, config FROM tenants ORDER BY slug").fetchall():
+            for kind, period in (("feed_tick", f"{utc:%Y-%m-%dT%H:%M}"),
+                                 ("sla_check", f"{utc:%Y-%m-%dT%H}")):
+                if jobs.once_per_period(conn, t["id"], kind, period):
+                    jobs.enqueue(conn, kind, t["id"], {}, dedupe_key=kind, lane=0, run_at=now)
             local = now.astimezone(ZoneInfo(t["config"]["timezone"]))
             if (local.hour >= t["config"]["sweep_hour_local"]
                     and jobs.once_per_period(conn, t["id"], "daily_sweep",

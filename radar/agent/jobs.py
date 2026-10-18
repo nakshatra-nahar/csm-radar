@@ -16,6 +16,11 @@ from psycopg.types.json import Jsonb
 from radar import clock
 
 BACKOFF_BASE_S, BACKOFF_CAP_S = 5, 3600
+# A twin with the same key, queued or running and newer, does this job's work: requeueing the
+# job instead would collide with the queued one on jobs_dedupe_idx and wedge fail() and reap().
+_HAS_TWIN = ("EXISTS (SELECT 1 FROM jobs t WHERE t.dedupe_key = jobs.dedupe_key"
+             " AND t.tenant_id IS NOT DISTINCT FROM jobs.tenant_id AND t.id <> jobs.id"
+             " AND (t.status = 'queued' OR (t.status = 'running' AND t.id > jobs.id)))")
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,12 @@ def fail(conn: psycopg.Connection, job: Job, error: str, max_attempts: int = 5,
     else:
         wait = random.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**job.attempts))
         status, run_at, finished_at = "queued", now + timedelta(seconds=wait), None
+        if conn.execute(
+                "UPDATE jobs SET status = 'dead', finished_at = %s, lease_expires_at = NULL,"
+                " last_error = 'superseded: ' || %s"
+                " WHERE id = %s AND attempts = %s AND status = 'running' AND " + _HAS_TWIN,
+                (now, error, job.id, job.attempts)).rowcount:
+            return
     conn.execute(
         "UPDATE jobs SET status = %s, run_at = COALESCE(%s, run_at), finished_at = %s,"
         " lease_expires_at = NULL, last_error = %s"
@@ -101,7 +112,11 @@ def reap(conn: psycopg.Connection, now: datetime | None = None) -> int:
     Without the dead branch a job that kills its worker every time would be retried forever.
     """
     now = now or clock.now()
-    return conn.execute(
+    superseded = conn.execute(
+        "UPDATE jobs SET status = 'dead', finished_at = %(now)s, lease_expires_at = NULL,"
+        " last_error = 'superseded' WHERE status = 'running' AND lease_expires_at < %(now)s"
+        " AND " + _HAS_TWIN, {"now": now}).rowcount
+    return superseded + conn.execute(
         "UPDATE jobs SET lease_expires_at = NULL,"
         " status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,"
         " finished_at = CASE WHEN attempts >= max_attempts THEN %(now)s END,"

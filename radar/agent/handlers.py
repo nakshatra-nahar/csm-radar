@@ -17,7 +17,7 @@ from radar.config import load_settings
 from radar.db import Database
 from radar.features import rule_facts
 from radar.ingest import feed
-from radar.scoring import score_tenant
+from radar.scoring import ManifestMismatch, score_tenant
 
 CADENCE = {"stripe": timedelta(hours=1), "zendesk": timedelta(hours=1),
            "gmail": timedelta(hours=1), "salesforce": timedelta(hours=26)}
@@ -29,11 +29,6 @@ def _lock(conn, tenant_id) -> None:
     at once (GitHub Actions and Vercel cron) cannot race the breaker count or freeze twice."""
     key = int.from_bytes(UUID(str(tenant_id)).bytes[:8], "big", signed=True)
     conn.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
-
-
-def _tenant_ids(db: Database) -> list[UUID]:
-    with db.system_tx() as conn:
-        return [r["id"] for r in conn.execute("SELECT id FROM tenants ORDER BY slug")]
 
 
 def _facts(db: Database, tenant_id, now: datetime, account_ids=None) -> tuple[dict, list]:
@@ -53,15 +48,15 @@ def _enqueue_briefs(conn, tenant_id, case_ids) -> None:
 
 
 def feed_tick(db: Database, job: Job) -> None:
-    """Deliver due demo feed records for every tenant; one coalesced rule check per account
-    the delivery touched with a trigger-worthy event."""
-    data_dir = load_settings().data_dir
-    for tid in _tenant_ids(db):
-        stats = feed.deliver_due(db, tid, clock.now(), data_dir)
-        with db.tenant_tx(tid) as conn:
-            for account in stats.triggers:
-                jobs.enqueue(conn, "evaluate_rules", tid, {"account_id": str(account)},
-                             dedupe_key=f"rules:{account}", lane=0)
+    """Deliver the tenant's due demo feed records; one coalesced rule check per account the
+    delivery touched with a trigger-worthy event."""
+    tid = job.tenant_id
+
+    def enqueue_rules(conn, stats) -> None:  # in the batch's transaction (design §8)
+        for account in stats.triggers:
+            jobs.enqueue(conn, "evaluate_rules", tid, {"account_id": str(account)},
+                         dedupe_key=f"rules:{account}", lane=0)
+    feed.deliver_due(db, tid, clock.now(), load_settings().data_dir, on_batch=enqueue_rules)
 
 
 def evaluate_rules(db: Database, job: Job) -> None:
@@ -85,20 +80,19 @@ def generate_brief(db: Database, job: Job) -> None:
 
 
 def sla_check(db: Database, job: Job) -> None:
-    """Escalate each open case past its SLA once: escalated_at, an audit row, and the
-    manager's next digest (which lists cases escalated since the last one)."""
+    """Escalate each of the tenant's open cases past its SLA once: escalated_at, an audit
+    row, and the manager's next digest (which lists cases escalated since the last one)."""
     now = clock.now()
-    for tid in _tenant_ids(db):
-        with db.tenant_tx(tid, actor="agent") as conn:
-            for c in conn.execute(
-                    "UPDATE cases SET escalated_at = %s WHERE status = 'open'"
-                    " AND sla_due_at < %s AND escalated_at IS NULL"
-                    " RETURNING id, kind, sla_due_at", (now, now)).fetchall():
-                conn.execute(
-                    "INSERT INTO audit_log (at, actor, action, entity_type, entity_id, after)"
-                    " VALUES (%s, 'agent', 'sla_escalated', 'cases', %s, %s)",
-                    (now, str(c["id"]), Jsonb({"kind": c["kind"],
-                                               "sla_due_at": c["sla_due_at"].isoformat()})))
+    with db.tenant_tx(job.tenant_id, actor="agent") as conn:
+        for c in conn.execute(
+                "UPDATE cases SET escalated_at = %s WHERE status = 'open'"
+                " AND sla_due_at < %s AND escalated_at IS NULL"
+                " RETURNING id, kind, sla_due_at", (now, now)).fetchall():
+            conn.execute(
+                "INSERT INTO audit_log (at, actor, action, entity_type, entity_id, after)"
+                " VALUES (%s, 'agent', 'sla_escalated', 'cases', %s, %s)",
+                (now, str(c["id"]), Jsonb({"kind": c["kind"],
+                                           "sla_due_at": c["sla_due_at"].isoformat()})))
 
 
 def _product_window(now: datetime) -> tuple[datetime, datetime]:
@@ -190,21 +184,27 @@ def daily_sweep(db: Database, job: Job) -> None:
     {'bootstrap': true} opens the first backlog past the breaker, audited (Ruling AB)."""
     tid, now = job.tenant_id, clock.now()
     bootstrap = bool(job.payload.get("bootstrap"))
-    run_id = score_tenant(db, tid, now, trigger="sweep", actionable=True)
+    try:
+        run_id = score_tenant(db, tid, now, trigger="sweep", actionable=True)
+    except ManifestMismatch:  # scoring fails closed with its incident; the rules still run
+        run_id = None
     tenant, hits = _facts(db, tid, now)
     cfg = tenant["config"]
     local = now.astimezone(ZoneInfo(cfg["timezone"]))
+    week = local.date()
     with db.tenant_tx(tid, actor="agent") as conn:
         _lock(conn, tid)
-        briefs = policy.open_cases(conn, tid, hits, f"run:{run_id}", now, cfg,
+        briefs = policy.open_cases(conn, tid, hits,
+                                   f"run:{run_id}" if run_id else f"sweep:{week}", now, cfg,
                                    breaker=not bootstrap)
         if bootstrap:
             conn.execute(
                 "INSERT INTO audit_log (at, actor, action, entity_type, entity_id, after)"
                 " VALUES (%s, 'agent', 'bootstrap_backlog', 'score_runs', %s, %s)",
-                (now, str(run_id), Jsonb({"count": len(briefs)})))
-        week = local.date()
-        if local.weekday() == 0 and policy.freeze_worklists(conn, tid, run_id, week, now, cfg):
+                (now, run_id and str(run_id), Jsonb({"count": len(briefs)})))
+        # no run, no freeze: a list is never frozen from stale or missing scores
+        if (run_id and local.weekday() == 0
+                and policy.freeze_worklists(conn, tid, run_id, week, now, cfg)):
             _write_digests(conn, week, now)
             briefs += [r["case_id"] for r in conn.execute(
                 "SELECT i.case_id FROM worklist_items i JOIN worklists w"

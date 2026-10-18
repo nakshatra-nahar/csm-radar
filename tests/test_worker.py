@@ -202,12 +202,14 @@ def test_schedules_respect_tenant_timezone_and_dst(empty):
     assert not sweep_due(empty, utc(11, 1, 13, 30), "kitewire")
     assert sweep_due(empty, utc(11, 1, 14), "kitewire")
     periods = rows(empty.owner, "SELECT kind, count(*) AS n FROM schedule_runs"
-                   " WHERE tenant_id IS NULL GROUP BY kind ORDER BY kind")
-    assert [(p["kind"], p["n"]) for p in periods] == [("feed_tick", 9), ("sla_check", 9)]
+                   " WHERE kind <> 'daily_sweep' GROUP BY kind ORDER BY kind")
+    assert [(p["kind"], p["n"]) for p in periods] == [("feed_tick", 18), ("sla_check", 18)]
     queued = rows(empty.owner, "SELECT kind, tenant_id, lane FROM jobs ORDER BY kind, lane")
     # a periodic job still queued absorbs the next period's (the worker is not running here)
     assert [(q["kind"], q["lane"]) for q in queued] == [
-        ("daily_sweep", 1), ("daily_sweep", 1), ("feed_tick", 0), ("sla_check", 0)]
+        ("daily_sweep", 1), ("daily_sweep", 1), ("feed_tick", 0), ("feed_tick", 0),
+        ("sla_check", 0), ("sla_check", 0)]
+    assert {q["tenant_id"] for q in queued} == {TALLY, tenant_id("kitewire")}
 
 
 def test_monday_sweep_freezes_worklists_and_digests(world):
@@ -338,3 +340,88 @@ def test_product_is_stale_after_the_monthly_batch_grace(last, now, stale):
     def at(s):
         return datetime.fromisoformat(s).replace(tzinfo=UTC)
     assert handlers.is_stale("product", at(last), at(now)) is stale
+
+
+def test_feed_triggers_commit_with_their_batch(world, small_world_dir, monkeypatch):
+    """Design §8: a batch's rule jobs are enqueued in the transaction that delivers it, so a
+    later batch failing (its offsets already advanced) loses none of them."""
+    from functools import partial
+
+    from radar.ingest import feed
+    delivered_at, _ = third_failure(small_world_dir)
+    monkeypatch.setattr(feed, "deliver_due", partial(feed.deliver_due, batch=1))
+    real, seen = feed.pipeline.ingest, []
+
+    def ingest_then_fail(conn, tid, records):
+        if seen:  # the batch after the first one with a trigger
+            raise RuntimeError("poison record")
+        stats = real(conn, tid, records)
+        seen.extend(stats.triggers)
+        return stats
+    monkeypatch.setattr(feed.pipeline, "ingest", ingest_then_fail)
+    clock.freeze(delivered_at + timedelta(days=1))  # records due after the trigger too
+    job = jobs.Job(id=0, tenant_id=TALLY, kind="feed_tick", payload={}, attempts=1,
+                   lease_expires_at=T0)
+    with pytest.raises(RuntimeError, match="poison"):
+        handlers.feed_tick(world.db, job)
+    queued = rows(world.owner, "SELECT payload FROM jobs WHERE kind = 'evaluate_rules'")
+    assert seen and [q["payload"]["account_id"] for q in queued] == [str(a) for a in seen]
+
+
+def test_one_tenant_failing_does_not_stop_the_others(world, small_world_dir, monkeypatch):
+    """Kitewire's feed delivery and agent transactions fail every time; Tallyworks still
+    gets its feed and its SLA escalation, every period."""
+    from radar.ingest import feed
+    kite = tenant_id("kitewire")
+    seed_tenants_and_users(world.dsn, world.db, ["kitewire"])
+    bootstrap_sweep(world.db, T0)
+    drain(world.db, T0)
+    case = must_act(world.owner)[0]
+    world.owner.execute("UPDATE cases SET sla_due_at = %s WHERE tenant_id = %s AND id = %s",
+                        (T0 + timedelta(minutes=30), TALLY, case["id"]))
+    real_deliver, real_tx = feed.deliver_due, world.db.tenant_tx
+
+    def deliver(db, tid, *args, **kwargs):
+        if tid == kite:
+            raise RuntimeError("poison record")
+        return real_deliver(db, tid, *args, **kwargs)
+
+    def tenant_tx(tid, actor="system"):
+        if tid == kite and actor == "agent":
+            raise RuntimeError("poison tenant")
+        return real_tx(tid, actor)
+    monkeypatch.setattr(feed, "deliver_due", deliver)
+    monkeypatch.setattr(world.db, "tenant_tx", tenant_tx)
+
+    def offset():
+        return world.owner.execute("SELECT sum(feed_offset) AS n FROM source_status"
+                                   " WHERE tenant_id = %s", (TALLY,)).fetchone()["n"]
+    seen = [offset()]
+    for hours in (1, 2):
+        drain(world.db, T0 + timedelta(hours=hours))
+        seen.append(offset())
+    assert seen[0] < seen[-1]  # its feed moved on
+    ticks = rows(world.owner, "SELECT status FROM jobs WHERE kind IN ('feed_tick', 'sla_check')"
+                 " AND tenant_id = %s", TALLY)
+    assert len(ticks) == 6 and {t["status"] for t in ticks} == {"done"}  # every period ran
+    escalated = world.owner.execute("SELECT escalated_at FROM cases WHERE tenant_id = %s"
+                                    " AND id = %s", (TALLY, case["id"])).fetchone()
+    assert escalated["escalated_at"] == T0 + timedelta(hours=1)
+
+
+def test_stale_model_still_runs_the_rules(world, monkeypatch):
+    """A stale model fails scoring closed (design §5); the sweep still rechecks every rule and
+    opens cases, and skips the Monday freeze, which needs a score run."""
+    from radar.scoring import ManifestMismatch
+
+    def stale(*args, **kwargs):
+        raise ManifestMismatch("model is stale")
+    monkeypatch.setattr(handlers, "score_tenant", stale)
+    bootstrap_sweep(world.db, MONDAY)
+    drain(world.db, MONDAY)
+    sweeps = rows(world.owner, "SELECT status FROM jobs WHERE kind = 'daily_sweep'")
+    assert [s["status"] for s in sweeps] == ["done"]
+    cases = must_act(world.owner)
+    by_sweep = [c for c in cases if c["opened_by"] == f"bootstrap:sweep:{MONDAY.date()}"]
+    assert len(by_sweep) == 12
+    assert rows(world.owner, "SELECT * FROM worklists") == []

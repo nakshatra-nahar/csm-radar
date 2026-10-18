@@ -180,3 +180,47 @@ def test_once_per_period(db, a_tenant):
         assert jobs.once_per_period(conn, None, "daily_sweep", "2026-03-03") is True
         assert jobs.once_per_period(conn, a_tenant, "daily_sweep", "2026-03-02") is True
         assert jobs.once_per_period(conn, None, "sla_check", "2026-03-02") is True
+
+
+LATER = T0 + timedelta(days=30)  # the twin stays queued out of other tests' claims
+
+
+def _running_with_queued_twin(db, key):
+    """(job X running with dedupe key `key`, id of its queued twin Y)."""
+    with db.system_tx() as conn:
+        jobs.enqueue(conn, "twin", None, {}, dedupe_key=key, run_at=T0)
+        [x] = jobs.claim(conn, "w1", n=1, lease_s=60, now=T0)
+        y = jobs.enqueue(conn, "twin", None, {}, dedupe_key=key, run_at=LATER)
+    return x, y
+
+
+def test_fail_with_a_queued_twin_is_superseded(db):
+    """Requeueing X would collide with Y on jobs_dedupe_idx: Y does the work, X dies."""
+    x, y = _running_with_queued_twin(db, "twin:fail")
+    with db.system_tx() as conn:
+        jobs.fail(conn, x, "boom", now=T0)
+    row = status(db, x.id)
+    assert (row["status"], row["last_error"]) == ("dead", "superseded: boom")
+    assert status(db, y)["status"] == "queued"
+
+
+def test_reap_with_a_queued_twin_does_not_wedge(db):
+    x, y = _running_with_queued_twin(db, "twin:reap")
+    with db.system_tx() as conn:
+        assert jobs.reap(conn, now=T0 + timedelta(seconds=61)) == 1
+    row = status(db, x.id)
+    assert (row["status"], row["last_error"]) == ("dead", "superseded")
+    assert status(db, y)["status"] == "queued"
+
+
+def test_reap_two_expired_twins_requeues_the_newer(db):
+    """Both twins were claimed and both workers died: one statement must not requeue both."""
+    soon = T0 + timedelta(days=10)  # before LATER: the other twins are not claimable
+    with db.system_tx() as conn:
+        for _ in range(2):
+            jobs.enqueue(conn, "twin", None, {}, dedupe_key="twin:both", run_at=soon)
+            [_job] = jobs.claim(conn, "w1", n=1, lease_s=60, now=soon)
+        older, newer = sorted(r["id"] for r in conn.execute(
+            "SELECT id FROM jobs WHERE dedupe_key = 'twin:both'"))
+        assert jobs.reap(conn, now=soon + timedelta(seconds=61)) == 2
+    assert status(db, older)["status"] == "dead" and status(db, newer)["status"] == "queued"

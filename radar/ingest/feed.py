@@ -32,8 +32,9 @@ def _lines(path: Path, offset: int, until: str) -> Iterator[tuple[str, str, dict
             yield rec["deliver_at"], rec["source"], rec, offset
 
 
-def deliver_due(db, tenant_id, now: datetime, data_dir: Path,
-                batch: int = 2000) -> pipeline.IngestStats:
+def deliver_due(db, tenant_id, now: datetime, data_dir: Path, batch: int = 2000,
+                on_batch=None) -> pipeline.IngestStats:
+    """on_batch(conn, stats) runs in each batch's transaction, before it commits."""
     until = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")  # the feed's own format
     total = pipeline.IngestStats()
     while True:
@@ -59,7 +60,10 @@ def deliver_due(db, tenant_id, now: datetime, data_dir: Path,
                 ends[source] = end
             if not records:
                 return total
-            total += pipeline.ingest(conn, tenant_id, records)
+            stats = pipeline.ingest(conn, tenant_id, records)
+            if on_batch:
+                on_batch(conn, stats)
+            total += stats
             for source, end in ends.items():
                 conn.execute("UPDATE source_status SET feed_offset = %s WHERE source = %s",
                              (end, source))
