@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from radar.registry import RULES
+
 
 @dataclass(frozen=True)
 class TenantSpec:
@@ -98,10 +100,7 @@ def runtime_config(slug: str) -> dict:
         "capacity_per_csm": 10,
         "sweep_hour_local": 6,
         "sla_business_days": {
-            "cancel_announced": 1,
-            "dunning_exhausted": 2,
-            "champion_bounced": 5,
-            "urgent_ticket_stalled": 2,
+            **{d.name: d.sla_days for d in RULES},
             "model_topk": 5,
         },
         "band_lift": {"red": 3.0, "yellow": 1.5},

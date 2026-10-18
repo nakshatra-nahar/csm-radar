@@ -12,9 +12,7 @@ from psycopg.types.json import Jsonb
 
 from radar import registry
 
-RULE_PLAYS = {"cancel_announced": "save_call", "dunning_exhausted": "billing_outreach",
-              "champion_bounced": "find_new_champion",
-              "urgent_ticket_stalled": "support_escalation"}
+RULE_PLAYS = {d.name: d.play for d in registry.RULES}
 MUST_ACT = list(RULE_PLAYS)
 SOURCE_PLAYS = {"product": "value_review", "zendesk": "support_escalation",
                 "gmail": "exec_check_in", "billing": "value_review"}

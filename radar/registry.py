@@ -24,6 +24,8 @@ class Definition:
     description: str
     fn: str | None = None  # "module:function"
     banned_reason: str | None = None
+    play: str | None = None  # a must-act rule's play
+    sla_days: int | None = None  # a must-act rule's default SLA, in business days
 
 
 def _f(name, kind, source, unit, risk, description, version=1):
@@ -163,22 +165,25 @@ def rules_score(df):
             + 1 * (df["not_live_after_30d"] > 0))
 
 
-def _r(name, source, description):
-    return Definition(name, 1, "rule", source, "bool", None, description,
-                      f"radar.features:{name}")
+def _r(name, source, description, play, sla_days, note=""):
+    days = f"{sla_days} business day{'' if sla_days == 1 else 's'}"
+    return Definition(name, 1, "rule", source, "bool", None,
+                      f"{description} SLA {days}; play {play}{note}", f"radar.features:{name}",
+                      play=play, sla_days=sla_days)
 
 
+# the plays and default SLAs live here only: policy.RULE_PLAYS and tenants.runtime_config
+# read them, and the data dictionary prints them
 RULES = [
     _r("cancel_announced", "billing+zendesk", "A subscription active/past_due/trialing with"
-       " cancel_at_period_end or cancel_at set, or an open ticket tagged cancellation_request."
-       " SLA 1 business day; play save_call"),
+       " cancel_at_period_end or cancel_at set, or an open ticket tagged cancellation_request.",
+       "save_call", 1),
     _r("dunning_exhausted", "billing", "An open invoice with attempt_count >= 3 or no next"
-       " attempt after a failure, or past_due for more than 7 days. SLA 2; play"
-       " billing_outreach"),
+       " attempt after a failure, or past_due for more than 7 days.", "billing_outreach", 2),
     _r("champion_bounced", "gmail+crm", "A hard bounce (5.1.1/5.2.1) for a champion contact"
-       " in the last 30 days. SLA 5; play find_new_champion (internal, no customer draft)"),
+       " in the last 30 days.", "find_new_champion", 5, " (internal, no customer draft)"),
     _r("urgent_ticket_stalled", "zendesk", "An urgent or high ticket open for more than 3"
-       " days. SLA 2; play support_escalation"),
+       " days.", "support_escalation", 2),
 ]
 
 
