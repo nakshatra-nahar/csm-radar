@@ -28,10 +28,10 @@
   <p class="empty">No run a week or more earlier to compare with.</p>
   {% else %}
   <ul class="changes">
-    {% for c in changes.changed_features[:5] %}
-    <li><b>{{ c.name|replace('_', ' ') }}</b> {{ num(c.before) }} → {{ num(c.after) }}
+    {% for c in changes.material[:5] %}
+    <li><b>{{ c.label }}</b> {{ c.shown_before }} → {{ c.shown_after }}
       <span class="delta {{ 'up' if c.delta_contribution > 0 else 'down' }}">{{ '{:+.2f}'.format(c.delta_contribution) }} log-odds</span></li>
-    {% else %}<li>Nothing changed.</li>{% endfor %}
+    {% else %}<li>No material change since the last run.</li>{% endfor %}
   </ul>
   {% if changes.version_changes.model %}<p class="note">The model changed between the runs.</p>{% endif %}
   {% endif %}
@@ -44,14 +44,14 @@
   <ul class="why">
     {% for g in why %}
     {% if g.source == "structure" %}
-    <li><b>structure</b> ({{ g.terms|map('first')|join(', ') }}) <span class="n">{{ '{:+.2f}'.format(g.total) }}</span></li>
+    <li><b>structure</b>{% if g.terms %} ({{ g.terms|map('first')|join(', ') }}){% endif %} <span class="n">{{ '{:+.2f}'.format(g.total) }}</span></li>
     {% else %}
     <li><b>{{ g.source }}</b> <span class="n">{{ '{:+.2f}'.format(g.total) }}</span>
-      <ul>{% for name, c in g.terms %}<li>{{ name|replace('_', ' ') }} <span class="n">{{ '{:+.2f}'.format(c) }}</span></li>{% endfor %}</ul></li>
+      {% if g.terms %}<ul>{% for label, c in g.terms %}<li>{{ label }} <span class="n">{{ '{:+.2f}'.format(c) }}</span></li>{% endfor %}</ul>{% endif %}</li>
     {% endif %}
     {% endfor %}
   </ul>
-  <p class="hint">Log-odds per source, so they add up to the score's logit.</p>
+  <p class="hint">Log-odds per source, so they add up to the score's logit. Terms under ±0.005 are left out here; the trace lists every one.</p>
   {% endif %}
 </section>
 </div>
@@ -69,7 +69,8 @@
     {% endif %}
     {% if c.draft %}
     {% set d = c.draft %}
-    <h4>Draft to the customer{% if d.email %} <span class="hint">to {{ d.email }}</span>{% endif %}</h4>
+    <h4>Draft to the customer</h4>
+    {% if d.email %}<p class="meta">To {{ d.email }}</p>{% endif %}
     <div class="preview">
       <p class="hint">Preview, as approving it now would send it:</p>
       <p><b>{{ d.preview.subject }}</b></p>

@@ -73,22 +73,50 @@ def _ticket(e: dict) -> str:
             f" {e['priority'] or 'unknown'})")
 
 
-def describe(e: dict, currency: str, cap: int | None = TEXT_CAP) -> tuple[str, str]:
+def _label(e: dict, currency: str) -> tuple[str, str]:
+    """(label, detail) of a system event in plain words; detail may be empty."""
+    a, t, status = e["attrs"], e["type"], e["status"]
+    if t == "billing.invoice":
+        attempt = a.get("attempt_count")
+        retry = f", payment attempt {attempt}" if status != "paid" and attempt else ""
+        return f"Invoice {status or 'updated'}", f"{_money(e['amount_minor'], currency)}{retry}"
+    if t == "billing.subscription":
+        if a.get("cancel_at_period_end"):
+            return "Subscription set to cancel at period end", ""
+        q = e["quantity"]
+        return f"Subscription {status or 'updated'}", f"{q} seat{'' if q == 1 else 's'}"
+    if t == "email.message":
+        if a.get("is_dsn"):
+            return "An email to a contact bounced", a.get("dsn_status") or ""
+        to = "to" if a.get("direction") == "outbound" else "from"
+        return f"{'Auto-reply' if a.get('is_auto_reply') else 'Email'} {to} customer", ""
+    if t == "crm.opportunity_history":
+        # shortcut: history rows carry no opportunity type and the CRM sync only sends renewal
+        # opportunities (sim/crm.py); join to crm.opportunity's type if new business is synced
+        return "Renewal opportunity", status or ""
+    if t == "crm.opportunity":
+        return f"{a.get('type') or 'CRM'} opportunity", status or ""
+    if t == "product.event":
+        return "Product event", (a.get("event") or "").replace("_", " ")
+    plain = {"crm.account": "CRM account updated", "crm.contact": "CRM contact updated",
+             "crm.user": "CRM user updated", "product.usage": "Monthly usage reported",
+             "billing.customer": "Billing customer updated",
+             "support.organization": "Support organization updated"}
+    return plain.get(t, t.replace(".", " ").replace("_", " ")), status or ""
+
+
+def describe(e: dict, currency: str, cap: int | None = TEXT_CAP,
+             dated: bool = True) -> tuple[str, str]:
     """(display, trust) for one event; ticket text is the customer's and is never trusted.
-    cap=None keeps the whole (redacted) ticket text, for a person reading the timeline."""
-    a, day = e["attrs"], e["occurred_at"].date().isoformat()
+    cap=None keeps the whole (redacted) ticket text; dated=False leaves the date out, for the
+    timeline, which shows it in its own column."""
+    a = e["attrs"]
+    on = f" on {e['occurred_at'].date().isoformat()}" if dated else ""
     if e["type"] == "support.ticket":
         text = redact(f"{a.get('subject', '')}: {a.get('description_excerpt', '')}")
-        return f"{_ticket(e)} on {day}: {text}"[:cap], "untrusted_customer_text"
-    if e["type"] == "billing.invoice":
-        return (f"Invoice {e['status']} on {day}: {_money(e['amount_minor'], currency)} due,"
-                f" payment attempt {a.get('attempt_count')}"), "system"
-    if e["type"] == "billing.subscription":
-        cancel = ", set to cancel at period end" if a.get("cancel_at_period_end") else ""
-        return f"Subscription {e['status']} on {day}: {e['quantity']} seats{cancel}", "system"
-    if e["type"] == "email.message" and a.get("is_dsn"):
-        return f"An email to a contact bounced on {day} ({a.get('dsn_status')})", "system"
-    return f"{e['type']} event ({e['status'] or 'no status'}) on {day}", "system"
+        return f"{_ticket(e)}{on}: {text}"[:cap], "untrusted_customer_text"
+    label, detail = _label(e, currency)
+    return f"{label}{on}{': ' + detail if detail else ''}", "system"
 
 
 def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[tuple]:
@@ -103,12 +131,13 @@ def _score_items(name: str, score: dict, changes: dict, currency: str) -> list[t
                 f" {score['lift']:.1f}x; rank {_num(score['rank_in_book'])} in book"
                 if score["p"] is not None else
                 f"Risk band {score['band']}; rules score {_num(score['rules_score'])}"))
-    out += [("radar", "change", f"{c['name']} moved from {_num(c['before'])} to"
-             f" {_num(c['after'])} since the previous run")
-            for c in changes["changed_features"] if c["before"] != c["after"]][:TOP]
+    out += [("radar", "change", f"{c['label']} moved from {c['shown_before']} to"
+             f" {c['shown_after']} since the previous run")
+            for c in scoring.material(changes["changed_features"], currency)][:TOP]
     top = sorted((score["contributions"] or {}).items(), key=lambda kv: (-kv[1], kv[0]))
-    out += [("radar", "contribution", f"{name} is {_num(score['features'].get(name))} and adds"
-             f" {c:.2f} to the log-odds") for name, c in top if c > 0][:TOP]
+    out += [("radar", "contribution", f"{registry.LABELS[name]} is"
+             f" {registry.shown(name, score['features'].get(name), currency)} and adds"
+             f" {c:.2f} to the log-odds") for name, c in top if c >= scoring.NEGLIGIBLE][:TOP]
     return out
 
 

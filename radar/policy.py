@@ -36,6 +36,9 @@ class RuleHit:
     sla_days: int
 
 
+BANDS = ("red", "yellow", "green", "unknown", "not_in_window")  # every value band() returns
+
+
 def band(p: float | None, lift: float | None, open_must_act: bool, coverage_ok: bool,
          eligible: bool, rules_score: float | None, cfg: dict) -> str:
     """risk_band v1. A must-act is a known fact, so it beats unknown coverage."""

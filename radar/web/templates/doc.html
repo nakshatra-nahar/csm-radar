@@ -4,6 +4,11 @@
 {% if html %}
 {# our own committed markdown, rendered with raw HTML escaped (oversight._markdown) #}
 <article class="doc {{ kind }}">{{ html|safe }}</article>
+{% elif model %}
+<h1>{{ title }}</h1>
+<p class="note">Model v{{ model.version }} is active for {{ tenant.name }}. Its model card is not
+  committed yet: run the evaluation to write it.</p>
+<p><a href="/dictionary">Data dictionary</a></p>
 {% else %}
 <h1>{{ title }}</h1>
 <p class="note">No model: rules only. {{ tenant.name }} has no trained model yet (a cold start),

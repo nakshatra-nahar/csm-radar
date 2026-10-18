@@ -7,7 +7,7 @@ import pytest
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from radar import model, registry, scoring
+from radar import model, policy, registry, scoring
 from radar.bootstrap import backfill_runs, train_and_promote
 from radar.db import owner_connect
 from radar.registry import FEATURE_NAMES
@@ -15,7 +15,7 @@ from radar.tenants import tenant_id
 
 AS_OF = datetime(2026, 10, 12, tzinfo=UTC)  # a Monday before the small world's history end
 HEARTHLINE, KITEWIRE = tenant_id("hearthline"), tenant_id("kitewire")
-BANDS = {"red", "yellow", "green", "unknown", "not_in_window"}
+BANDS = set(policy.BANDS)
 
 
 @pytest.fixture(scope="module")
@@ -170,3 +170,14 @@ def test_wrong_sign_fit_is_rejected_not_promoted(trained_world_db, owner, monkey
     assert rows[0]["status"] == "rejected"
     assert rows[0]["metrics"]["wrong_signs"] == [flip.name]
     assert [r["id"] for r in rows if r["status"] == "active"] == [active]
+
+
+def test_lift_and_band_is_the_one_p_to_band_step():
+    """Ruling AR(a): score_frame and the /ops promotion preview share this step."""
+    cfg = {"band_lift": {"red": 1.4, "yellow": 1.1}}
+    lift, band = scoring.lift_and_band(
+        [0.1, 0.3, 0.2, None], eligible=[True, True, True, False],
+        must_act=[False, False, True, False], coverage_ok=[True, True, True, True],
+        rules_score=[0.0, 0.0, 0.0, 0.0], cfg=cfg)
+    assert [round(x, 3) for x in lift[:3]] == [0.5, 1.5, 1.0] and math.isnan(lift[3])
+    assert band == ["green", "red", "red", "not_in_window"]  # a must-act is red whatever p says

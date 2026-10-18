@@ -4,12 +4,16 @@ Logs in through the real login form (TestClient), saves each page's HTML with th
 inlined, and renders it with headless Chrome at laptop and phone size:
 
     uv run python scripts/screenshots.py --dsn <radar_web DSN> --out <dir> [--tenant hearthline]
+        [--chrome <path>]
+
+Chrome is --chrome, else $RADAR_CHROME, else the macOS install path.
 
 The database must be bootstrapped (tenants, users, at least one sweep). The demo passcode is
 read from the environment like the app's (RADAR_DEMO_PASSCODE).
 """
 
 import argparse
+import os
 import subprocess
 from pathlib import Path
 
@@ -60,7 +64,7 @@ def login(app, passcode: str, tenant, user) -> TestClient:
     return c
 
 
-def shoot(html: str, out: Path, name: str) -> list[Path]:
+def shoot(html: str, out: Path, name: str, chrome: str = CHROME) -> list[Path]:
     """Write the page with its CSS inlined, then one PNG per size. Headless Chrome lays out
     at least 500px wide, so a narrower size renders the page in an iframe of that width."""
     page = out / f"{name}.html"
@@ -73,19 +77,25 @@ def shoot(html: str, out: Path, name: str) -> list[Path]:
             target.write_text(f'<body style="margin:0"><iframe src="{page.name}" width="{w}"'
                               f' height="{h}" style="border:0"></iframe>')
         png = out / f"{name}-{size}.png"
-        subprocess.run([CHROME, "--headless=new", "--hide-scrollbars", f"--screenshot={png}",
+        subprocess.run([chrome, "--headless=new", "--hide-scrollbars", f"--screenshot={png}",
                         f"--window-size={w},{h}", target.as_uri()], check=True,
                        capture_output=True, timeout=60)
         pngs.append(png)
     return pngs
 
 
-def main(argv: list[str] | None = None) -> list[Path]:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--dsn", required=True, help="radar_web DSN of a bootstrapped database")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--tenant", default="hearthline", help="tenant slug")
-    args = parser.parse_args(argv)
+    parser.add_argument("--chrome", default=os.environ.get("RADAR_CHROME", CHROME),
+                        help="Chrome or Chromium binary (default: $RADAR_CHROME, else macOS)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> list[Path]:
+    args = parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     settings, db = load_settings(), Database(args.dsn)
     try:
@@ -104,7 +114,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
             r = (clients[role] if role else TestClient(app)).get(path)
             if r.status_code != 200:
                 raise SystemExit(f"{role} {path}: {r.status_code}")
-            pngs += shoot(r.text, args.out, f"{args.tenant}-{name}")
+            pngs += shoot(r.text, args.out, f"{args.tenant}-{name}", args.chrome)
     finally:
         db.close()
     return pngs

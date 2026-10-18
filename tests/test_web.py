@@ -2,10 +2,14 @@
 webhooks and the tick endpoint, against the small trained world after a Monday sweep."""
 
 import dataclasses
+import importlib.util
 import json
 import re
+import threading
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -13,17 +17,18 @@ from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from radar import clock, policy, registry
-from radar.agent import brief, handlers, jobs, worker
+from radar import clock, policy, registry, scoring
+from radar.agent import brief, handlers, jobs, template, worker
+from radar.agent.evidence import build_pack
 from radar.agent.jobs import Job
 from radar.bootstrap import seed_tenants_and_users
 from radar.config import load_settings
-from radar.db import Database, owner_connect
+from radar.db import Database, UnsafeRole, owner_connect
 from radar.ingest import webhooks
 from radar.scoring import score_tenant
 from radar.sim.names import INJECTION_ACCOUNT_NAME
 from radar.tenants import tenant_id
-from radar.web import queries
+from radar.web import hooks, oversight, queries
 from radar.web.app import CSP, create_app
 from tests.conftest import (
     WEB_PASSWORD,
@@ -81,7 +86,8 @@ def _swept(w):
             brief.generate_brief(db, HEARTH, case, None)
         web_db = Database(_role_dsn(w["owner_dsn"], "radar_web", WEB_PASSWORD))
         try:
-            yield SimpleNamespace(owner=owner, db=db, web_db=web_db, csm=csm["user_id"],
+            yield SimpleNamespace(owner=owner, owner_dsn=w["owner_dsn"], db=db, web_db=web_db,
+                                  csm=csm["user_id"],
                                   manager=csm["manager_id"], cases=cases,
                                   app=create_app(settings(), web_db, db))
         finally:
@@ -167,10 +173,13 @@ def test_role_route_matrix(web, role, route, status):
     who = {"csm": web.csm, "manager": web.manager, "admin": user_of(web, HEARTH, "admin")}
     c = client_as(web, who[role])
     if route == "promote":
-        model = candidate(web)
-        assert c.post(f"/admin/models/{model}/promote").status_code == status
-        promoted = one(web, "SELECT status FROM models WHERE id = %s", model)["status"]
-        assert promoted == ("active" if status == 200 else "candidate")
+        old, model = active_model(web)["id"], candidate(web)
+        try:
+            assert c.post(f"/admin/models/{model}/promote").status_code == status
+            promoted = one(web, "SELECT status FROM models WHERE id = %s", model)["status"]
+            assert promoted == ("active" if status == 200 else "candidate")
+        finally:
+            restore_models(web, old, model)
         return
     path = {"own": f"/accounts/{own_account(web)}",
             "other": f"/accounts/{other_account(web)}"}.get(route, route)
@@ -380,7 +389,7 @@ def test_tick_and_app_refuse_an_unsafe_worker_role(web):
         assert app.state.db_worker is None  # the refused pool is closed, not kept
         owner_db = Database(dsn)
         try:
-            with pytest.raises(RuntimeError, match="unsafe"):
+            with pytest.raises(UnsafeRole, match="unsafe"):
                 create_app(settings(), web.web_db, owner_db)
         finally:
             owner_db.close()
@@ -553,8 +562,9 @@ def _check_team_row(web, wl):
         "SELECT s.band, count(*) AS n, coalesce(sum(s.arr_minor), 0) AS arr FROM latest_scores s"
         " JOIN accounts a ON a.id = s.account_id WHERE a.owner_user_id = %s"
         " AND a.merged_into IS NULL AND NOT a.is_test GROUP BY s.band", (web.csm,)).fetchall()}
-    assert cells[:4] == [f'{books[b]["n"]}<span class="arr">{money(books[b]["arr"])}</span>'
-                         if b in books else "—" for b in ("red", "yellow", "green", "unknown")]
+    n = len(policy.BANDS)  # one column per band (Ruling AR h)
+    assert cells[:n] == [f'{books[b]["n"]}<span class="arr">{money(books[b]["arr"])}</span>'
+                         if b in books else "—" for b in policy.BANDS]
     counts = one(web, "SELECT"
                  " count(*) FILTER (WHERE c.kind = ANY(%s) AND c.status = 'open') AS must,"
                  " count(*) FILTER (WHERE c.status = 'open' AND c.sla_due_at < %s) AS sla,"
@@ -566,13 +576,26 @@ def _check_team_row(web, wl):
     overflow = one(web, "SELECT count(*) AS n FROM worklist_items WHERE worklist_id = %s"
                    " AND reason LIKE 'overflow:%%'", wl)["n"]
     assert counts["sla"] >= 1 and overflow >= 1
-    assert cells[4:] == [str(counts["must"]), f'<span class="tag gap">{counts["sla"]} late</span>',
+    assert cells[n:] == [str(counts["must"]), f'<span class="tag gap">{counts["sla"]} late</span>',
                          str(overflow), str(counts["dis"])]
     at_risk = one(web, "SELECT sum(s.expected_arr_at_risk_minor) AS v FROM latest_scores s"
                   " JOIN accounts a ON a.id = s.account_id JOIN users u ON u.id = a.owner_user_id"
-                  " WHERE u.manager_id = %s AND u.active AND a.merged_into IS NULL"
+                  " WHERE u.manager_id = %s AND a.merged_into IS NULL"  # departed reports too
                   " AND NOT a.is_test", web.manager)["v"]
     assert f"(p × ARR), this week</dt><dd>{money(at_risk)}</dd>" in page
+    renewals = web.owner.execute(  # Ruling AR(l): the renewal buckets, against SQL
+        "SELECT s.band, count(*) AS n, coalesce(sum(s.arr_minor), 0) AS arr FROM latest_scores s"
+        " JOIN accounts a ON a.id = s.account_id JOIN users u ON u.id = a.owner_user_id"
+        " JOIN tenants t ON t.id = s.tenant_id WHERE u.manager_id = %s"
+        " AND a.merged_into IS NULL AND NOT a.is_test AND (s.context->>'term_end')::date"
+        " BETWEEN (%s AT TIME ZONE t.timezone)::date"
+        " AND (%s AT TIME ZONE t.timezone)::date + 90 GROUP BY s.band",
+        (web.manager, clock.now(), clock.now())).fetchall()
+    shown = page.split('id="renew-h"', 1)[1].split("</section>", 1)[0]
+    assert renewals and len(re.findall("<li>", shown)) == len(renewals)
+    for r in renewals:
+        assert (f'<span class="band band-{r["band"]}">{r["band"].replace("_", " ")}</span>'
+                f' {r["n"]} accounts, {money(r["arr"])}') in shown
 
 
 def test_team_page_lists_risky_accounts_without_a_working_owner(web):
@@ -628,7 +651,15 @@ def test_ops_page_and_incident_acknowledgement(web):
 
 
 def test_promote_shows_band_changes_first_then_promotes(web):
+    old = active_model(web)
     same, flipped = candidate(web), candidate(web, coef_scale=-1.0)
+    try:
+        _check_promote(web, old, same, flipped)
+    finally:  # the original model is active again for the tests that follow
+        restore_models(web, old["id"], same, flipped)
+
+
+def _check_promote(web, old, same, flipped):
     admin_id = user_of(web, HEARTH, "admin")
     admin = client_as(web, admin_id)
     page = admin.get("/ops").text
@@ -638,15 +669,11 @@ def test_promote_shows_band_changes_first_then_promotes(web):
         return int(form.split("Would change band for <b>", 1)[1].split("<", 1)[0])
     assert changes(same) == 0  # the active model's own artifact changes nothing
     assert changes(flipped) > 0
-    old = one(web, "SELECT id FROM models WHERE tenant_id = %s AND status = 'active'", HEARTH)
     assert admin.post(f"/admin/models/{flipped}/promote").status_code == 200
     assert one(web, "SELECT status FROM models WHERE id = %s", old["id"])["status"] == "retired"
     new = one(web, "SELECT status, promoted_by FROM models WHERE id = %s", flipped)
     assert (new["status"], new["promoted_by"]) == ("active", f"user:{admin_id}")
     assert admin.post(f"/admin/models/{flipped}/promote").status_code == 404  # not a candidate
-    # put the original model back for the tests that follow
-    web.owner.execute("UPDATE models SET status = 'retired' WHERE id = %s", (flipped,))
-    web.owner.execute("UPDATE models SET status = 'active' WHERE id = %s", (old["id"],))
 
 
 def test_model_card_and_dictionary_render_markdown_with_html_escaped(web, monkeypatch):
@@ -673,3 +700,210 @@ def test_team_and_ops_render_empty_states(web):
                " 'Lonely Manager', 'manager') RETURNING id", HEARTH,
                f"{uuid.uuid4().hex[:8]}@hearthline.io")["id"]
     assert "No CSMs on this team" in client_as(web, boss).get("/team").text
+
+
+# --- Ruling AQ: UI and brief polish ----------------------------------------------------------
+
+def scored_case(web):
+    """One of the CSM's briefed cases whose account has a non-negligible positive
+    contribution (so 'why now' has one to fall back on)."""
+    return one(web, "SELECT c.id, c.account_id, s.run_id FROM cases c JOIN latest_scores s"
+               " ON s.account_id = c.account_id WHERE c.id = ANY(%s) AND EXISTS (SELECT 1"
+               " FROM jsonb_each_text(s.contributions) j WHERE j.value::float8 >= %s)"
+               " ORDER BY c.id LIMIT 1", web.cases, scoring.NEGLIGIBLE)
+
+
+def section(page, heading_id):
+    return page.split(f'id="{heading_id}"', 1)[1].split("</section>", 1)[0]
+
+
+def test_tenure_drift_alone_is_no_material_change(web):
+    """A run 6 days earlier that differs only by tenure drift: the account page, the brief's
+    evidence and the /week 'why now' never headline it."""
+    case = scored_case(web)
+    prev = one(web, "INSERT INTO score_runs (tenant_id, model_id, trigger, actionable, as_of,"
+               " watermarks, crosswalk_watermark, config_version, manifest, code_version,"
+               " status, started_at, finished_at) SELECT tenant_id, model_id, 'backfill', false,"
+               " as_of - interval '6 days', watermarks, crosswalk_watermark, config_version,"
+               " manifest, code_version, 'done', started_at, finished_at FROM score_runs"
+               " WHERE id = %s RETURNING id", case["run_id"])["id"]
+    cols = ("tenant_id, account_id, eligible, p, logit, lift, rules_score, band, rank_in_book,"
+            " owner_user_id, arr_minor, expected_arr_at_risk_minor, context, coverage")
+    web.owner.execute(
+        f"INSERT INTO account_scores (run_id, as_of, features, contributions, {cols})"
+        " SELECT %s, as_of - interval '6 days',"
+        " jsonb_set(features, '{tenure_years}', to_jsonb((features->>'tenure_years')::float8"
+        " - 0.0004)), jsonb_set(contributions, '{tenure_years}',"
+        f" to_jsonb((contributions->>'tenure_years')::float8 - 0.0003)), {cols}"
+        " FROM account_scores WHERE run_id = %s AND account_id = %s",
+        (prev, case["run_id"], case["account_id"]))
+    try:
+        page = client_as(web, web.csm).get(f"/accounts/{case['account_id']}").text
+        with web.db.tenant_tx(HEARTH) as conn:
+            pack = build_pack(conn, HEARTH, case["id"])
+            wl = queries.worklist(conn, web.csm, MONDAY.date())
+            [row] = [r for r in queries.worklist_rows(conn, wl, "USD")
+                     if r["account_id"] == case["account_id"]]
+    finally:
+        web.owner.execute("DELETE FROM account_scores WHERE run_id = %s", (prev,))
+        web.owner.execute("DELETE FROM score_runs WHERE id = %s", (prev,))
+    changed = section(page, "changed-h")
+    assert "No material change since the last run." in changed and "tenure" not in changed
+    assert not [i for i in pack.items if "moved from" in i.display]
+    assert not [s for s in template.render(pack)["summary"] if "moved from" in s["text"]]
+    score = one(web, "SELECT features, contributions FROM latest_scores WHERE account_id = %s",
+                case["account_id"])
+    name, c = max(score["contributions"].items(), key=lambda kv: kv[1])
+    assert row["why_now"] == (f"{registry.LABELS[name]}:"
+                              f" {registry.shown(name, score['features'][name], 'USD')} ({c:+.2f})")
+
+
+def test_why_hides_negligible_terms_but_the_trace_keeps_them(web):
+    case = scored_case(web)
+    key = (case["run_id"], case["account_id"])
+    before = one(web, "SELECT contributions FROM account_scores WHERE run_id = %s"
+                 " AND account_id = %s", *key)["contributions"]
+    web.owner.execute("UPDATE account_scores SET contributions = jsonb_set(contributions,"
+                      " '{integration_broken}', '0.0') WHERE run_id = %s AND account_id = %s", key)
+    try:
+        page = client_as(web, web.csm).get(f"/accounts/{case['account_id']}").text
+    finally:
+        web.owner.execute("UPDATE account_scores SET contributions = %s WHERE run_id = %s"
+                          " AND account_id = %s", (Jsonb(before), *key))
+    why = section(page, "why-h")
+    assert "<b>product</b>" in why and registry.LABELS["integration_broken"] not in why
+    assert re.search(r'<th scope="row">integration_broken</th>\s*<td class="n">[^<]*</td>\s*'
+                     r'<td class="n">\+0\.0000</td>', section(page, "trace-h"))
+
+
+def test_draft_recipient_is_not_uppercased(web):
+    draft = one(web, "SELECT c.account_id, t.email FROM outbox o JOIN cases c ON c.id = o.case_id"
+                " JOIN contacts t ON t.id = o.to_contact_id WHERE o.case_id = ANY(%s)"
+                " AND o.status = 'draft' AND o.kind = 'customer_email' AND c.status = 'open'"
+                " LIMIT 1", web.cases)
+    page = client_as(web, web.csm).get(f"/accounts/{draft['account_id']}").text
+    assert not [h for h in re.findall(r"<h4.*?</h4>", page, re.S) if draft["email"] in h]
+    assert f'<p class="meta">To {draft["email"]}</p>' in page
+    css = (Path(queries.__file__).parent / "static" / "style.css").read_text()
+    assert not [r for r in re.findall(r"([^{}]*)\{([^}]*)\}", css)
+                if ".meta" in r[0] and "text-transform" in r[1]]
+
+
+# --- Ruling AR: Task 11b minors --------------------------------------------------------------
+
+def active_model(web):
+    return one(web, "SELECT id, version FROM models WHERE tenant_id = %s AND status = 'active'",
+               HEARTH)
+
+
+def restore_models(web, active_id, *created):
+    """Put the active model back and delete the candidates a test made."""
+    web.owner.execute("UPDATE models SET status = 'retired' WHERE tenant_id = %s"
+                      " AND status = 'active' AND id <> %s", (HEARTH, active_id))
+    web.owner.execute("UPDATE models SET status = 'active' WHERE id = %s", (active_id,))
+    web.owner.execute("DELETE FROM models WHERE id = ANY(%s)", (list(created),))
+
+
+def test_concurrent_promotes_the_loser_gets_409(web):
+    old = active_model(web)["id"]
+    first, second = candidate(web), candidate(web)
+    admin = client_as(web, user_of(web, HEARTH, "admin"))
+    rival = owner_connect(web.owner_dsn, row_factory=dict_row)  # one open transaction
+    result = {}
+    try:
+        rival.execute("UPDATE models SET status = 'retired' WHERE id = %s", (old,))
+        rival.execute("UPDATE models SET status = 'active' WHERE id = %s", (first,))
+        loser = threading.Thread(target=lambda: result.update(
+            r=admin.post(f"/admin/models/{second}/promote")))
+        loser.start()
+        for _ in range(200):  # until the loser's promote waits on the rival's row lock
+            if one(web, "SELECT count(*) AS n FROM pg_stat_activity WHERE wait_event_type"
+                   " = 'Lock' AND datname = current_database()")["n"]:
+                break
+            time.sleep(0.05)
+        rival.commit()
+        loser.join(30)
+        assert result["r"].status_code == 409 and "at the same time" in result["r"].text
+        assert one(web, "SELECT status FROM models WHERE id = %s", second)["status"] \
+            == "candidate"
+        assert active_model(web)["id"] == first
+    finally:
+        rival.rollback()
+        rival.close()
+        restore_models(web, old, first, second)
+
+
+def test_promotion_refuses_a_candidate_built_on_other_feature_code(web):
+    old = active_model(web)["id"]
+    stale = candidate(web)
+    web.owner.execute("UPDATE models SET manifest = jsonb_set(manifest, '{usage_drop}',"
+                      " '\"v0:0000\"') WHERE id = %s", (stale,))
+    try:
+        r = client_as(web, user_of(web, HEARTH, "admin")).post(f"/admin/models/{stale}/promote")
+        assert r.status_code == 409 and "usage_drop" in r.text
+        assert one(web, "SELECT status FROM models WHERE id = %s", stale)["status"] == "candidate"
+        assert active_model(web)["id"] == old
+    finally:
+        restore_models(web, old, stale)
+
+
+def test_error_pages_keep_the_nav_and_the_security_headers(web, monkeypatch):
+    c = client_as(web, web.csm, raise_server_exceptions=False)
+    r = c.get(f"/accounts/{other_account(web)}")
+    assert r.status_code == 404 and "Log out" in r.text and 'href="/book"' in r.text
+    monkeypatch.setattr(queries, "book", lambda conn, band: 1 / 0)
+    r = c.get("/book")
+    assert r.status_code == 500 and "Log out" in r.text
+    assert (r.headers["content-security-policy"], r.headers["x-content-type-options"],
+            r.headers["referrer-policy"]) == (CSP, "nosniff", "same-origin")
+
+
+def test_model_page_follows_the_active_model_not_the_card_file(web, monkeypatch, tmp_path):
+    monkeypatch.setattr(oversight, "DOCS", tmp_path)  # no committed card
+    page = client_as(web, web.csm).get("/model").text
+    assert "No model" not in page and f"Model v{active_model(web)['version']} is active" in page
+
+
+def test_team_totals_include_departed_reports_accounts(web):
+    left = one(web, "INSERT INTO users (tenant_id, email, name, role, manager_id, active)"
+               " VALUES (%s, %s, 'Gone Csm', 'csm', %s, false) RETURNING id", HEARTH,
+               f"{uuid.uuid4().hex[:8]}@hearthline.io", web.manager)["id"]
+    moved = one(web, "SELECT a.id FROM latest_scores s JOIN accounts a ON a.id = s.account_id"
+                " WHERE a.owner_user_id = %s AND s.expected_arr_at_risk_minor > 0 LIMIT 1",
+                web.csm)["id"]
+    web.owner.execute("UPDATE accounts SET owner_user_id = %s WHERE id = %s", (left, moved))
+    try:
+        page = client_as(web, web.manager).get("/team").text
+        at_risk = one(web, "SELECT sum(s.expected_arr_at_risk_minor) AS v FROM latest_scores s"
+                      " JOIN accounts a ON a.id = s.account_id JOIN users u"
+                      " ON u.id = a.owner_user_id WHERE u.manager_id = %s"
+                      " AND a.merged_into IS NULL AND NOT a.is_test", web.manager)["v"]
+    finally:
+        web.owner.execute("UPDATE accounts SET owner_user_id = %s WHERE id = %s",
+                          (web.csm, moved))
+    assert f"(p × ARR), this week</dt><dd>USD {at_risk / 100:,.0f}</dd>" in page
+    assert "including accounts of departed reports" in page
+
+
+def test_tick_maps_only_an_unsafe_role_to_503(web, monkeypatch):
+    def broken(conn):
+        raise RuntimeError("pool exploded")
+    monkeypatch.setattr(hooks, "assert_role_safety", broken)
+    app = create_app(settings(worker_dsn=_role_dsn(web.owner_dsn, "radar_worker",
+                                                   WORKER_PASSWORD)), web.web_db)
+    r = TestClient(app, raise_server_exceptions=False).post(
+        "/internal/tick", headers={"Authorization": "Bearer tick-secret"})
+    assert r.status_code == 500 and app.state.db_worker is None
+
+
+def test_screenshots_take_the_chrome_path_from_the_flag_or_env(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "screenshots", Path(__file__).resolve().parents[1] / "scripts" / "screenshots.py")
+    shots = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shots)
+    base = ["--dsn", "x", "--out", "y"]
+    monkeypatch.setenv("RADAR_CHROME", "/opt/chrome")
+    assert shots.parse_args(base).chrome == "/opt/chrome"
+    assert shots.parse_args([*base, "--chrome", "/usr/bin/chromium"]).chrome == "/usr/bin/chromium"
+    monkeypatch.delenv("RADAR_CHROME")
+    assert shots.parse_args(base).chrome == shots.CHROME

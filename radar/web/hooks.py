@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 from radar import clock
 from radar.agent import jobs, worker
-from radar.db import Database, assert_role_safety
+from radar.db import Database, UnsafeRole, assert_role_safety
 from radar.ingest import feed, pipeline, webhooks
 
 router = APIRouter()
@@ -92,6 +92,6 @@ def tick(request: Request):
         raise HTTPException(401)
     try:
         db = _worker_db(request.app)
-    except RuntimeError as e:  # an unsafe role: fail closed, and say why
+    except UnsafeRole as e:  # fail closed, and say why; any other failure is a 500
         return JSONResponse({"detail": str(e)}, status_code=503)
     return worker.run_for(db, worker_id="vercel-tick", budget_s=settings.tick_budget_s)

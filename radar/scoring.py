@@ -17,6 +17,8 @@ from radar.features import compute_features, watermarks
 from radar.registry import FEATURE_NAMES, rules_score
 
 TOLERANCE = 1e-9
+MATERIAL = 0.01  # log-odds: a smaller change between runs is not shown
+NEGLIGIBLE = 0.005  # log-odds: a smaller contribution is left out of the Why panel and briefs
 SCORES = ["rules_score", "p", "logit", "contributions", "lift", "rank_in_book",
           "expected_arr_at_risk_minor", "band"]
 
@@ -45,6 +47,20 @@ def _plain(v):
     return v.item() if isinstance(v, np.generic) else v
 
 
+def lift_and_band(p, eligible, must_act, coverage_ok, rules_score, cfg: dict) -> tuple:
+    """Each account's lift (p over the mean p of the eligible accounts) and band: the one step
+    score_frame and the /ops promotion preview share. Arguments are aligned sequences; returns
+    (lift as a float array, bands as a list)."""
+    p = np.asarray(p, dtype=float)
+    eligible = np.asarray(eligible, dtype=bool)
+    known = p[eligible & ~np.isnan(p)]  # none without a model: no lift
+    lift = p / known.mean() if known.size else np.full(len(p), np.nan)
+    band = [policy.band(_plain(pi), _plain(li), bool(m), bool(c), bool(e), r, cfg)
+            for pi, li, m, c, e, r in zip(p, lift, must_act, coverage_ok, eligible, rules_score,
+                                          strict=True)]
+    return lift, band
+
+
 def score_frame(frames: Frames, tenant: dict, as_of: datetime, artifact: dict | None,
                 must_act: set = frozenset()) -> pd.DataFrame:
     """Features, context and scores for every active account at as_of. Ineligible accounts
@@ -65,15 +81,14 @@ def score_frame(frames: Frames, tenant: dict, as_of: datetime, artifact: dict | 
         df["contributions"] = pd.Series(
             [dict(zip(artifact["features"], row.tolist(), strict=True)) for row in c],
             index=df.index[eligible], dtype=object).reindex(df.index)
-    df["lift"] = df["p"] / df.loc[eligible, "p"].mean()
+    df["lift"], df["band"] = lift_and_band(df["p"], eligible, df.index.isin(must_act),
+                                           df["coverage_ok"], df["rules_score"],
+                                           tenant["config"])
     key = (df["p"] if artifact is not None else df["rules_score"]) * df["arr_minor"]
     ranked = eligible & key.notna()  # only these get a rank; the rest stay NaN
     df["rank_in_book"] = policy.rank_in_book(key[ranked], df.loc[ranked, "arr_minor"],
                                              df.loc[ranked, "owner_user_id"])
     df["expected_arr_at_risk_minor"] = (df["p"] * df["arr_minor"]).round()
-    df["band"] = [policy.band(_plain(r.p), _plain(r.lift), r.Index in must_act,
-                              bool(r.coverage_ok), bool(r.eligible), r.rules_score,
-                              tenant["config"]) for r in df.itertuples()]
     return df
 
 
@@ -101,6 +116,13 @@ def _load(conn, tenant_id) -> tuple[dict, dict | None, Frames]:
     return tenant, active, load_frames(conn, tenant_id)
 
 
+def stale_features(manifest: dict) -> list[str]:
+    """The features whose code changed since a model's manifest was taken: a model trained on
+    them must not score (score_tenant) or be promoted."""
+    current = registry.manifest()
+    return sorted(f for f, h in manifest.items() if current.get(f) != h)
+
+
 def score_tenant(db, tenant_id: UUID, as_of: datetime, trigger: str, actionable: bool) -> UUID:
     """Score every active account at as_of with the active model (rules_score if none) and
     store the run. Fails closed on a stale model: one incident, ManifestMismatch, no run."""
@@ -110,10 +132,8 @@ def score_tenant(db, tenant_id: UUID, as_of: datetime, trigger: str, actionable:
             "SELECT account_id FROM cases WHERE tenant_id = %s AND kind = ANY(%s)"
             " AND status IN ('open', 'held') AND opened_at <= %s",
             (tenant_id, policy.MUST_ACT, as_of)).fetchall()}
-    current = registry.manifest()
     if active is not None:
-        changed = sorted(f for f, h in active["manifest"].items() if current.get(f) != h)
-        if changed:
+        if changed := stale_features(active["manifest"]):
             with db.tenant_tx(tenant_id) as conn:
                 conn.execute(
                     "INSERT INTO incidents (kind, details, opened_at)"
@@ -129,7 +149,8 @@ def score_tenant(db, tenant_id: UUID, as_of: datetime, trigger: str, actionable:
             " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (active and active["id"], trigger, actionable, as_of,
              Jsonb({k: _plain(v) for k, v in watermarks(frames, as_of).items()}),
-             _plain(links.max()), tenant["config_version"], Jsonb(current), _code_version(),
+             _plain(links.max()), tenant["config_version"], Jsonb(registry.manifest()),
+             _code_version(),
              clock.now())).fetchone()["id"]
     try:
         df = score_frame(frames, tenant, as_of, active and active["artifact"], must_act)
@@ -205,3 +226,16 @@ def diff_runs(conn, account_id: UUID, run_id: UUID, prev_run_id: UUID | None = N
             "model": change("model_id"), "config_version": change("config_version"),
             "manifest": sorted(k for k in now["manifest"].keys() | prev["manifest"].keys()
                                if now["manifest"].get(k) != prev["manifest"].get(k))}}
+
+
+def material(changed: list[dict], currency: str) -> list[dict]:
+    """The changes a person should see (Ruling AQ): at least MATERIAL log-odds and a different
+    displayed value, so drift such as tenure_years never headlines. Each gains its label and
+    displayed before/after."""
+    out = []
+    for c in changed:
+        before, after = (registry.shown(c["name"], c[k], currency) for k in ("before", "after"))
+        if abs(c["delta_contribution"]) >= MATERIAL and before != after:
+            out.append(c | {"label": registry.LABELS[c["name"]], "shown_before": before,
+                            "shown_after": after})
+    return out

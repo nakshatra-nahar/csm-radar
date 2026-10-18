@@ -52,6 +52,10 @@ class Database:
         self.pool.close()
 
 
+class UnsafeRole(RuntimeError):
+    """The connection's role is one RLS would not constrain (design §4.3)."""
+
+
 def assert_role_safety(conn: psycopg.Connection) -> None:
     """Refuse to run as a role that RLS would not constrain."""
     row = conn.cursor(row_factory=tuple_row).execute(
@@ -62,7 +66,7 @@ def assert_role_safety(conn: psycopg.Connection) -> None:
     ).fetchone()
     name, superuser, bypassrls, owns = row
     if superuser or bypassrls or owns:
-        raise RuntimeError(
+        raise UnsafeRole(
             f"role {name} is unsafe for the app (superuser={superuser},"
             f" bypassrls={bypassrls}, owns_tables={owns})"
         )

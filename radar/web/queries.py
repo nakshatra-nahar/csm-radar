@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 
 from radar import clock, model, policy, registry, scoring
@@ -48,10 +49,11 @@ def any_worklist(conn, week: date) -> bool:
                         (week,)).fetchone() is not None
 
 
-def worklist_rows(conn, wl: dict) -> list[dict]:
+def worklist_rows(conn, wl: dict, currency: str) -> list[dict]:
     """The frozen items in list order, scored by the run the list was frozen from."""
     rows = conn.execute(
-        "SELECT i.*, a.name, a.owner_user_id, s.arr_minor, s.band, s.lift,"
+        "SELECT i.*, a.name, a.owner_user_id, s.arr_minor, s.band, s.lift, s.features,"
+        " s.contributions,"
         " (s.context->>'term_end')::date AS term_end, c.play, c.status AS case_status,"
         " EXISTS (SELECT 1 FROM outbox o WHERE o.case_id = i.case_id"
         "  AND o.kind = 'customer_email' AND o.status = 'draft') AS draft_ready,"
@@ -69,9 +71,23 @@ def worklist_rows(conn, wl: dict) -> list[dict]:
         " LEFT JOIN cases c ON c.id = i.case_id WHERE i.worklist_id = %s ORDER BY i.position",
         (wl["id"],)).fetchall()
     for r in rows:
-        changed = scoring.diff_runs(conn, r["account_id"], wl["run_id"])["changed_features"]
-        r["top_change"] = changed[0] if changed else None
+        r["why_now"] = why_now(conn, r, wl["run_id"], currency)
     return rows
+
+
+def why_now(conn, row: dict, run_id: UUID, currency: str) -> str | None:
+    """The largest material change since the last run, else the largest positive contribution
+    (at least NEGLIGIBLE) with its value (Ruling AQ); None if there is neither."""
+    changed = scoring.diff_runs(conn, row["account_id"], run_id)["changed_features"]
+    if shown := scoring.material(changed, currency):
+        c = shown[0]
+        return (f"{c['label']} {'up' if c['delta_contribution'] > 0 else 'down'}:"
+                f" {c['shown_before']} → {c['shown_after']}")
+    up = [(c, f) for f, c in (row["contributions"] or {}).items() if c >= scoring.NEGLIGIBLE]
+    if not up:
+        return None
+    c, f = max(up)
+    return f"{registry.LABELS[f]}: {registry.shown(f, row['features'].get(f), currency)} ({c:+.2f})"
 
 
 def book(conn, band: str | None) -> list[dict]:
@@ -108,13 +124,15 @@ def score(conn, account_id: UUID) -> dict | None:
 
 def why(contributions: dict | None) -> list[dict]:
     """Contributions (log-odds) grouped by source, largest effect first; the structural terms
-    form one 'structure' group the page shows collapsed."""
+    form one 'structure' group the page shows collapsed. A group's total counts every term but
+    lists only those of at least NEGLIGIBLE (the trace table keeps them all)."""
     groups: dict[str, list] = {}
     for d in registry.FEATURES:
         if contributions and d.name in contributions:
             key = "structure" if d.kind == "structural" else d.source.split("+")[0]
-            groups.setdefault(key, []).append((d.name, contributions[d.name]))
-    out = [{"source": k, "total": sum(c for _, c in terms), "terms": terms}
+            groups.setdefault(key, []).append((registry.LABELS[d.name], contributions[d.name]))
+    out = [{"source": k, "total": sum(c for _, c in terms),
+            "terms": [(n, c) for n, c in terms if abs(c) >= scoring.NEGLIGIBLE]}
            for k, terms in groups.items()]
     return sorted(out, key=lambda g: -abs(g["total"]))
 
@@ -136,7 +154,8 @@ def timeline(conn, account_id: UUID, as_of, currency: str) -> list[dict]:
     rows = conn.execute(TIMELINE, {"now": clock.now(), "a": account_id,
                                    "n": TIMELINE_ITEMS}).fetchall()
     return [{"at": e["occurred_at"], "source": e["source"], "method": e["method"],
-             "text": describe(e, currency, cap=None)[0], "exact": e["method"] in EXACT_METHODS,
+             "text": describe(e, currency, cap=None, dated=False)[0],
+             "exact": e["method"] in EXACT_METHODS,
              "late": as_of is not None and e["available_at"] > as_of} for e in rows]
 
 
@@ -257,18 +276,18 @@ def ops(conn, tz: str) -> dict:
 
 
 def _bands(rows: list[dict], artifact: dict, cfg: dict) -> dict:
-    """Each account's band had `artifact` scored the run's stored features: p, lift and band
-    exactly as scoring.score_frame computes them."""
-    eligible = [r for r in rows if r["eligible"]]
-    p = {}
-    if eligible:
-        frame = pd.DataFrame([r["features"] for r in eligible], dtype=float)
-        p = dict(zip((r["account_id"] for r in eligible), model.predict(artifact, frame)[0],
-                     strict=True))
-    mean = sum(p.values()) / len(p) if p else None
-    return {r["account_id"]: policy.band(
-        p.get(r["account_id"]), p[r["account_id"]] / mean if r["account_id"] in p else None,
-        r["must_act"], r["coverage_ok"], r["eligible"], r["rules_score"], cfg) for r in rows}
+    """Each account's band had `artifact` scored the run's stored features, through the same
+    scoring.lift_and_band step as a score run."""
+    eligible = [bool(r["eligible"]) for r in rows]
+    p = np.full(len(rows), np.nan)
+    if any(eligible):
+        frame = pd.DataFrame([r["features"] for r, e in zip(rows, eligible, strict=True) if e],
+                             dtype=float)
+        p[eligible] = model.predict(artifact, frame)[0]
+    _, bands = scoring.lift_and_band(p, eligible, [r["must_act"] for r in rows],
+                                     [r["coverage_ok"] for r in rows],
+                                     [r["rules_score"] for r in rows], cfg)
+    return {r["account_id"]: b for r, b in zip(rows, bands, strict=True)}
 
 
 def band_changes(conn, candidate: dict, active: dict | None, cfg: dict) -> int:

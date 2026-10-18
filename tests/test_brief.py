@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from psycopg.rows import dict_row
 
-from radar import clock, scoring
-from radar.agent import brief, template, validate
+from radar import clock, registry, scoring
+from radar.agent import brief, evidence, template, validate
 from radar.agent.evidence import build_pack
 from radar.agent.llm import FakeClient, LLMResult, cost_usd
 from radar.asof import load_frames
@@ -458,3 +458,55 @@ def test_feature_event_relinked_after_the_run_is_not_customer_safe(trained_world
                      (ref, other, clock.now()))
         after = next(i for i in build_pack(conn, tid, case).items if i.event_id == it.event_id)
     assert not after.customer_safe
+
+
+# --- Ruling AQ: plain labels, display rounding, material changes only ----------------------
+
+def _event(type_, status=None, amount_minor=None, quantity=None, **attrs):
+    return {"type": type_, "status": status, "priority": None, "amount_minor": amount_minor,
+            "quantity": quantity, "attrs": attrs,
+            "occurred_at": datetime(2026, 10, 11, 9, tzinfo=UTC)}
+
+
+def test_event_descriptions_use_plain_labels():
+    def text(e, dated=False):
+        return evidence.describe(e, "USD", cap=None, dated=dated)[0]
+    assert text(_event("crm.opportunity_history", "Closed Lost", opp_id="006X")) \
+        == "Renewal opportunity: Closed Lost"
+    assert text(_event("email.message", direction="inbound")) == "Email from customer"
+    assert text(_event("email.message", direction="outbound")) == "Email to customer"
+    assert text(_event("billing.invoice", "paid", 124500, attempt_count=1)) \
+        == "Invoice paid: USD 1,245.00"
+    assert text(_event("billing.subscription", "active", quantity=12,
+                       cancel_at_period_end=True)) == "Subscription set to cancel at period end"
+    # the pack keeps the date (the timeline shows it in its own column)
+    assert text(_event("email.message", direction="inbound"), dated=True) \
+        == "Email from customer on 2026-10-11"
+    for type_ in ("crm.account", "crm.contact", "product.event", "billing.customer"):
+        assert "no status" not in text(_event(type_)) and "event (" not in text(_event(type_))
+
+
+SCORE = {"band": "red", "p": 0.4, "lift": 2.0, "rank_in_book": 1, "rules_score": 2.0,
+         "arr_minor": 1_000_00, "context": {"term_end": "2026-12-01"},
+         "contributions": {"days_since_customer_email": 0.2612, "tenure_years": 0.0012,
+                           "log_arr": 0.31, "seat_utilization": -0.4},
+         "features": {"days_since_customer_email": 120.0, "tenure_years": 1.36,
+                      "log_arr": 9.21034, "seat_utilization": 0.5}}
+
+
+def test_template_brief_uses_plain_labels_and_display_rounding():
+    assert list(registry.LABELS) == registry.FEATURE_NAMES  # every feature has a plain label
+    drift = {"changed_features": [
+        {"name": "tenure_years", "before": 1.3601, "after": 1.3605, "delta_contribution": -3e-4},
+        {"name": "seat_utilization", "before": 0.5, "after": 0.5, "delta_contribution": 0.2}]}
+    shown = [d for _, kind, d in evidence._score_items("Acme", SCORE, drift, "USD")
+             if kind in ("change", "contribution")]
+    assert not [d for d in shown if "moved from" in d]  # no material change
+    # tenure's +0.0012 is below what the Why panel shows, so the brief leaves it out too
+    assert shown == ["ARR is USD 10,000 and adds 0.31 to the log-odds",
+                     "days since customer email is 120 and adds 0.26 to the log-odds"]
+    real = {"changed_features": [{"name": "days_since_customer_email", "before": 30.0,
+                                  "after": 120.0, "delta_contribution": 0.2}]}
+    [change] = [d for _, kind, d in evidence._score_items("Acme", SCORE, real, "USD")
+                if kind == "change"]
+    assert change == "days since customer email moved from 30 to 120 since the previous run"

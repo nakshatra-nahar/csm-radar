@@ -11,6 +11,7 @@
 {% else %}
 <section aria-labelledby="risk-h">
   <h2 id="risk-h">ARR at risk</h2>
+  <p class="hint">Team totals and renewals below count every account your team owns, including accounts of departed reports that still need a new owner.</p>
   <dl class="facts kpis">
     <div><dt>Expected ARR at risk (p × ARR), this week</dt><dd>{{ money(at_risk.now, cur) }}</dd></div>
     <div><dt>Last week</dt><dd>{{ money(at_risk.before, cur) if run.prev else 'no run a week earlier' }}</dd></div>
@@ -42,7 +43,7 @@
   <table class="list">
     <thead><tr>
       <th scope="col">CSM</th>
-      {% for b in ("red", "yellow", "green", "unknown") %}<th scope="col" class="n">{{ chip(b) }}</th>{% endfor %}
+      {% for b in bands %}<th scope="col" class="n">{{ chip(b) }}</th>{% endfor %}
       <th scope="col" class="n">Must-acts open</th><th scope="col" class="n">SLA breaches</th>
       <th scope="col" class="n">Overflow</th><th scope="col" class="n">Dismissed this week</th>
       <th scope="col">List this week</th>
@@ -52,7 +53,7 @@
     {% set book = by_csm[c.id] %}
     <tr>
       <th scope="row">{{ c.name }}</th>
-      {% for b in ("red", "yellow", "green", "unknown") %}
+      {% for b in bands %}
       <td class="n">{% if b in book %}{{ book[b].n }}<span class="arr">{{ money(book[b].arr, cur) }}</span>{% else %}—{% endif %}</td>
       {% endfor %}
       <td class="n">{{ c.must_acts }}</td>

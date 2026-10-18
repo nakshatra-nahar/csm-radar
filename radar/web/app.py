@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,17 @@ MACHINE_PATHS = ("/webhooks/", "/internal/", "/healthz")  # these answer in JSON
 TITLES = {400: "Bad request", 401: "Not allowed", 404: "Not found", 409: "Already changed"}
 CSP = ("default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none';"
        " base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
+                    "Referrer-Policy": "same-origin"}
+
+
+def _viewer(request: Request) -> auth.SessionUser | None:
+    """The logged-in user for an error page's nav; None when there is none or it cannot be
+    read (the error page must render even when the database is the problem)."""
+    try:
+        return auth.current_user(request)
+    except Exception:
+        return None
 
 
 def create_app(settings: Settings, db_web: Database, db_worker: Database | None = None) -> FastAPI:
@@ -32,9 +44,7 @@ def create_app(settings: Settings, db_web: Database, db_worker: Database | None 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = CSP
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers.update(SECURITY_HEADERS)
         return response
 
     # added last, so it runs first: the session is decoded before any route reads it.
@@ -51,6 +61,7 @@ def create_app(settings: Settings, db_web: Database, db_worker: Database | None 
         if request.url.path.startswith(MACHINE_PATHS):
             return await http_exception_handler(request, exc)
         return auth.render(request, "error.html", exc.status_code, headers=exc.headers,
+                           user=await run_in_threadpool(_viewer, request),
                            title=TITLES.get(exc.status_code, "Error"),
                            message=exc.detail if exc.status_code != 404 else None)
 
@@ -58,7 +69,10 @@ def create_app(settings: Settings, db_web: Database, db_worker: Database | None 
     async def server_error(request: Request, exc: Exception):  # the traceback goes to the log
         if request.url.path.startswith(MACHINE_PATHS):
             return JSONResponse({"detail": "Internal Server Error"}, status_code=500)
-        return auth.render(request, "error.html", 500, title="Something went wrong")
+        # this handler runs outside the middleware stack, so it sets the headers itself
+        return auth.render(request, "error.html", 500, headers=SECURITY_HEADERS,
+                           user=await run_in_threadpool(_viewer, request),
+                           title="Something went wrong")
 
     app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
     for router in (auth.router, routes.router, oversight.router, hooks.router):

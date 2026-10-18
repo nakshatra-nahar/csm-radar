@@ -8,17 +8,17 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import markdown
+import psycopg
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from radar import clock, rbac, registry
+from radar import clock, policy, rbac, registry, scoring
 from radar.web import queries
 from radar.web.auth import User, render, tx
 
 router = APIRouter()
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 RENEWAL_DAYS = 90
-TEAM_BANDS = ("red", "yellow", "green", "unknown", "not_in_window")
 
 
 def _admin(user: dict, action: str) -> None:
@@ -56,11 +56,12 @@ def team(request: Request, user: User):
         run = queries.latest_run(conn)
         current = queries.run_scores(conn, run["id"]) if run else []
         previous = queries.run_scores(conn, run["prev"]["id"]) if run and run["prev"] else []
-        scores, before = ([s for s in rows
-                           if rbac.authorize(user, s["owner_user_id"], team_ids, "view")]
-                          for rows in (current, previous))
-        # a manager still answers for what their departed CSMs left behind
+        # a manager still answers for what their departed CSMs left behind, so the totals and
+        # renewals count those accounts too (the page says so); the per-CSM table cannot
         former = queries.former_reports(conn, user["id"])
+        scores, before = ([s for s in rows
+                           if rbac.authorize(user, s["owner_user_id"], team_ids | former, "view")]
+                          for rows in (current, previous))
         orphans = [s for s in current if s["band"] in ("red", "unknown")
                    and not s["owner_active"]
                    and rbac.authorize(user, s["owner_user_id"], former, "view")]
@@ -80,7 +81,7 @@ def team(request: Request, user: User):
                "red_before": sum(s["arr_minor"] or 0 for s in before if s["band"] == "red")}
     return render(request, "team.html", user=user, tenant=tenant, csms=csms, run=run,
                   by_csm=by_csm, renewals=renewals, at_risk=at_risk, orphans=orphans,
-                  bands=TEAM_BANDS, model=model, renewal_days=RENEWAL_DAYS)
+                  bands=policy.BANDS, model=model, renewal_days=RENEWAL_DAYS)
 
 
 @router.get("/ops")
@@ -118,11 +119,22 @@ def promote(request: Request, user: User, model_id: UUID):
     per tenant). The next score run uses it."""
     _admin(user, "promote_model")
     with tx(request, user) as conn:
+        model = conn.execute("SELECT manifest FROM models WHERE id = %s AND status = 'candidate'",
+                             (model_id,)).fetchone()
+        if model is None:
+            raise HTTPException(404)
+        if stale := scoring.stale_features(model["manifest"]):  # the next sweep would refuse it
+            raise HTTPException(409, "This model was trained on feature code that has since"
+                                     f" changed ({', '.join(stale)}); retrain it first.")
         conn.execute("UPDATE models SET status = 'retired' WHERE status = 'active'")
-        promoted = conn.execute(
-            "UPDATE models SET status = 'active', promoted_at = %s, promoted_by = %s"
-            " WHERE id = %s AND status = 'candidate'",
-            (clock.now(), f"user:{user['id']}", model_id)).rowcount
+        try:
+            promoted = conn.execute(
+                "UPDATE models SET status = 'active', promoted_at = %s, promoted_by = %s"
+                " WHERE id = %s AND status = 'candidate'",
+                (clock.now(), f"user:{user['id']}", model_id)).rowcount
+        except psycopg.errors.UniqueViolation:  # a concurrent promote activated another one
+            raise HTTPException(409, "Another model was promoted at the same time; reload Ops"
+                                     " to see which.") from None
         if not promoted:  # raising rolls the retirement back too
             raise HTTPException(404)
     return RedirectResponse("/ops", status_code=303)
@@ -134,10 +146,12 @@ def model_card(request: Request, user: User):
     by the rules heuristic, described from the registry."""
     with tx(request, user) as conn:
         tenant = queries.tenant(conn, user["tenant_id"])
+        model = queries.active_model(conn)
     card = DOCS / f"model-card-{tenant['slug']}.md"
     rules = next(d for d in registry.METRICS if d.name == "rules_score")
+    html = _markdown(card.read_text()) if model and card.exists() else None
     return render(request, "doc.html", user=user, tenant=tenant, title="Model card", kind="card",
-                  html=_markdown(card.read_text()) if card.exists() else None, rules=rules)
+                  html=html, rules=rules, model=model)
 
 
 @router.get("/dictionary")

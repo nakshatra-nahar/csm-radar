@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from radar import clock, rbac, registry, scoring
+from radar import clock, policy, rbac, registry, scoring
 from radar.agent import brief
 from radar.web import queries
 from radar.web.auth import User, render, tx
@@ -14,7 +14,6 @@ from radar.web.auth import User, render, tx
 router = APIRouter()
 OUTCOMES = ("called", "emailed", "met", "no_action")
 DISMISSALS = ("not_a_risk", "already_handled")
-BANDS = ("red", "yellow", "green", "unknown", "not_in_window")
 RETURN_PAGES = {"/week"}  # where a case form may send the user back to
 
 
@@ -48,7 +47,7 @@ def week(request: Request, user: User):
             conn.execute("UPDATE worklists SET viewed_at = %s WHERE id = %s",
                          (clock.now(), wl["id"]))
         team = rbac.team_ids(conn, user["id"])
-        rows = [r for r in (queries.worklist_rows(conn, wl) if wl else [])
+        rows = [r for r in (queries.worklist_rows(conn, wl, tenant["currency"]) if wl else [])
                 if rbac.authorize(user, r["owner_user_id"], team, "view")]
         frozen_any = wl is not None or queries.any_worklist(conn, start)
         ctx = {"tenant": tenant, "week": start, "worklist": wl, "rows": rows,
@@ -59,13 +58,13 @@ def week(request: Request, user: User):
 
 @router.get("/book")
 def book(request: Request, user: User, band: str | None = None):
-    band = band if band in BANDS else None
+    band = band if band in policy.BANDS else None
     with tx(request, user) as conn:
         team = rbac.team_ids(conn, user["id"])
         rows = [r for r in queries.book(conn, band)
                 if rbac.authorize(user, r["owner_user_id"], team, "view")]
         ctx = {"tenant": queries.tenant(conn, user["tenant_id"]), "rows": rows, "band": band,
-               "bands": BANDS, "model": queries.active_model(conn)}
+               "bands": policy.BANDS, "model": queries.active_model(conn)}
     return render(request, "book.html", user=user, **ctx)
 
 
@@ -75,9 +74,12 @@ def _account_page(request: Request, user: dict, account_id: UUID, recompute=None
         tenant = queries.tenant(conn, user["tenant_id"])
         score = queries.score(conn, account_id)
         currency = tenant["currency"]
+        changes = score and scoring.diff_runs(conn, account_id, score["run_id"])
+        if changes:
+            changes["material"] = scoring.material(changes["changed_features"], currency)
         ctx = {"tenant": tenant, "account": account, "score": score, "currency": currency,
                "model": queries.active_model(conn),
-               "changes": score and scoring.diff_runs(conn, account_id, score["run_id"]),
+               "changes": changes,
                "why": queries.why(score and score["contributions"]),
                "timeline": queries.timeline(conn, account_id, score and score["as_of"],
                                             currency),

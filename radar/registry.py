@@ -7,6 +7,7 @@ it lazily, so this module imports nothing of ours and every other module may imp
 import hashlib
 import importlib
 import inspect
+import math
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -65,6 +66,35 @@ FEATURES = [
        "1 if no workspace is linked at T; product features are then imputed by the model"),
 ]
 FEATURE_NAMES = [d.name for d in FEATURES]
+# What a CSM reads instead of the feature name (pages and briefs)
+LABELS = {
+    "usage_drop": "usage drop", "seat_utilization": "seat utilization",
+    "integration_broken": "integration broken", "not_live_after_30d": "not live after 30 days",
+    "open_urgent_tickets": "open urgent tickets",
+    "support_friction_90d": "support friction (90 days)",
+    "days_since_customer_email": "days since customer email",
+    "seat_change_180d": "seat change (180 days)", "log_arr": "ARR", "tenure_years": "tenure",
+    "term_end_within_60d": "renewal within 60 days",
+    "billing_month_to_month": "month-to-month billing", "no_telemetry": "no product telemetry"}
+
+
+def shown(name: str, value, currency: str) -> str:
+    """A feature value as a person reads it, undoing its unit's transform: whole days and
+    counts, yes/no flags, ARR as currency, tenure in years, ratios to two decimals."""
+    if value is None:
+        return "missing"
+    unit = next(d.unit for d in FEATURES if d.name == name)
+    if unit == "days":
+        return f"{value:.0f}"
+    if unit == "0/1":
+        return "yes" if value else "no"
+    if unit == "log1p(count)":
+        return f"{math.expm1(value):.0f}"
+    if unit == "ln(major units)":
+        return f"{currency} {math.exp(value):,.0f}"
+    if unit == "log1p(years)":
+        return f"{math.expm1(value):.1f} years"
+    return f"{value:.2f}"
 
 
 def _m(name, description, fn=None, kind="metric", source="derived", unit=""):

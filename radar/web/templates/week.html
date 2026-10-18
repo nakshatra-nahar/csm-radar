@@ -49,7 +49,7 @@
       <td>{% if r.weeks_listed <= 1 %}<span class="tag new">new</span>{% else %}week {{ r.weeks_listed }}{% endif %}</td>
       <td>
         {% if r.kind == "model" %}
-          {% if r.top_change %}{{ r.top_change.name|replace('_', ' ') }} {{ 'up' if r.top_change.delta_contribution > 0 else 'down' }}{% else %}top of your book{% endif %}
+          {{ r.why_now or 'top of your book' }}
         {% else %}{{ r.reason|replace('_', ' ') }}{% endif %}
       </td>
       <td>{{ (r.play or '—')|replace('_', ' ') }}</td>
