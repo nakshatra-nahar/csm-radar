@@ -1,11 +1,13 @@
 """Every page read (design §9). Each function takes a connection from the user's tenant_tx, so
 RLS has already limited it to the session's tenant; callers apply rbac.authorize per account."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from radar import clock, registry, scoring
+import pandas as pd
+
+from radar import clock, model, policy, registry, scoring
 from radar.agent import brief
 from radar.agent.evidence import EXACT_METHODS, describe
 
@@ -168,3 +170,118 @@ def draft_of(conn, account_id: UUID, outbox_id: UUID) -> dict | None:
         "SELECT o.* FROM outbox o JOIN cases c ON c.tenant_id = o.tenant_id AND c.id = o.case_id"
         " WHERE o.id = %s AND c.account_id = %s AND o.kind = 'customer_email'",
         (outbox_id, account_id)).fetchone()
+
+
+# --- team page (design §9: the VP's dashboard) ---------------------------------------------
+
+def latest_run(conn) -> dict | None:
+    """The run behind latest_scores, and the newest done run at least 6 days older (the
+    'last week' diff_runs compares with)."""
+    run = conn.execute("SELECT run_id AS id, as_of FROM latest_scores LIMIT 1").fetchone()
+    if run:
+        run["prev"] = conn.execute(
+            "SELECT id FROM score_runs WHERE status = 'done' AND as_of <= %s - interval '6 days'"
+            " ORDER BY as_of DESC, finished_at DESC LIMIT 1", (run["as_of"],)).fetchone()
+    return run
+
+
+def run_scores(conn, run_id: UUID) -> list[dict]:
+    """Each live account's score in the run, under its current owner."""
+    return conn.execute(
+        "SELECT a.id, a.name, a.owner_user_id, u.active AS owner_active, s.band, s.arr_minor,"
+        " s.expected_arr_at_risk_minor AS at_risk, (s.context->>'term_end')::date AS term_end"
+        " FROM account_scores s JOIN accounts a ON a.tenant_id = s.tenant_id"
+        " AND a.id = s.account_id LEFT JOIN users u ON u.tenant_id = a.tenant_id"
+        " AND u.id = a.owner_user_id WHERE s.run_id = %s AND a.merged_into IS NULL"
+        " AND NOT a.is_test ORDER BY s.arr_minor DESC NULLS LAST, a.name", (run_id,)).fetchall()
+
+
+def csm_activity(conn, week: date, tz: str) -> list[dict]:
+    """One row per active CSM: open must-acts, SLA breaches, must-acts beyond capacity on this
+    week's list (overflow), dismissals since Monday (tenant time), and whether they opened
+    this week's list."""
+    return conn.execute(
+        "SELECT u.id, u.name, u.manager_id,"
+        " (SELECT count(*) FROM cases c WHERE c.owner_user_id = u.id AND c.status = 'open'"
+        "  AND c.kind = ANY(%(must)s)) AS must_acts,"
+        " (SELECT count(*) FROM cases c WHERE c.owner_user_id = u.id AND c.status = 'open'"
+        "  AND c.sla_due_at < %(now)s) AS sla_breaches,"
+        " (SELECT count(*) FROM worklist_items i WHERE i.worklist_id = w.id"
+        "  AND i.reason LIKE 'overflow:%%') AS overflow,"
+        " (SELECT count(*) FROM cases c WHERE c.owner_user_id = u.id"
+        "  AND c.status = 'dismissed' AND c.closed_at >= %(monday)s) AS dismissals,"
+        " w.id IS NOT NULL AS listed, w.viewed_at"
+        " FROM users u LEFT JOIN worklists w ON w.tenant_id = u.tenant_id AND w.user_id = u.id"
+        " AND w.week_start = %(week)s WHERE u.role = 'csm' AND u.active ORDER BY u.name",
+        {"must": policy.MUST_ACT, "now": clock.now(), "week": week,
+         "monday": datetime.combine(week, time(), ZoneInfo(tz))}).fetchall()
+
+
+def former_reports(conn, manager_id: UUID) -> set:
+    """Deactivated users who reported to the manager: their accounts still need an owner."""
+    return {r["id"] for r in conn.execute("SELECT id FROM users WHERE manager_id = %s"
+                                          " AND NOT active", (manager_id,)).fetchall()}
+
+
+# --- ops page (admin) -----------------------------------------------------------------------
+
+TOKENS = ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+          "cache_read_input_tokens")
+OPS = {
+    "sources": "SELECT * FROM source_status ORDER BY source",
+    "quarantine": "SELECT reason, count(*) AS n FROM quarantine WHERE resolved_at IS NULL"
+                  " GROUP BY reason ORDER BY n DESC, reason",
+    "links": "SELECT method, count(*) AS n FROM identity_links GROUP BY method"
+             " ORDER BY n DESC, method",
+    "jobs": "SELECT status, count(*) AS n FROM jobs GROUP BY status ORDER BY status",
+    "agent": "SELECT at, action, entity_type, entity_id, after->>'status' AS status"
+             " FROM audit_log WHERE actor = 'agent' ORDER BY at DESC, id DESC LIMIT 20",
+    "llm": "SELECT count(*) AS calls, coalesce(sum(cost_usd), 0) AS cost_usd, coalesce(sum("
+           + " + ".join(f"coalesce((usage->>'{t}')::bigint, 0)" for t in TOKENS)
+           + "), 0) AS tokens FROM llm_calls WHERE created_at >= %(since)s",
+    "incidents": "SELECT * FROM incidents WHERE closed_at IS NULL OR opened_at >= %(since)s"
+                 " - interval '7 days' ORDER BY closed_at IS NULL DESC, opened_at DESC",
+    "models": "SELECT id, version, status, metrics, trained_at, promoted_at, promoted_by,"
+              " artifact FROM models ORDER BY version DESC",
+    "digests": "SELECT kind, status, subject, created_at FROM outbox WHERE kind <> 'customer_email'"
+               " ORDER BY created_at DESC LIMIT 10",
+}
+
+
+def ops(conn, tz: str) -> dict:
+    """Everything the ops page shows; 'today' starts at the tenant's local midnight."""
+    since = datetime.combine(clock.now().astimezone(ZoneInfo(tz)).date(), time(), ZoneInfo(tz))
+    out = {k: conn.execute(q, {"since": since}).fetchall() for k, q in OPS.items()}
+    out["llm"] = out["llm"][0]
+    return out
+
+
+def _bands(rows: list[dict], artifact: dict, cfg: dict) -> dict:
+    """Each account's band had `artifact` scored the run's stored features: p, lift and band
+    exactly as scoring.score_frame computes them."""
+    eligible = [r for r in rows if r["eligible"]]
+    p = {}
+    if eligible:
+        frame = pd.DataFrame([r["features"] for r in eligible], dtype=float)
+        p = dict(zip((r["account_id"] for r in eligible), model.predict(artifact, frame)[0],
+                     strict=True))
+    mean = sum(p.values()) / len(p) if p else None
+    return {r["account_id"]: policy.band(
+        p.get(r["account_id"]), p[r["account_id"]] / mean if r["account_id"] in p else None,
+        r["must_act"], r["coverage_ok"], r["eligible"], r["rules_score"], cfg) for r in rows}
+
+
+def band_changes(conn, candidate: dict, active: dict | None, cfg: dict) -> int:
+    """How many accounts of the latest run would change band if the candidate replaced the
+    active model (the stored bands when there is none), on the same stored inputs and today's
+    open must-acts, so only the model differs."""
+    rows = conn.execute(
+        "SELECT s.account_id, s.eligible, s.features, s.rules_score, s.band,"
+        " coalesce((s.coverage->>'ok')::bool, false) AS coverage_ok, EXISTS (SELECT 1"
+        "  FROM cases c WHERE c.account_id = s.account_id AND c.kind = ANY(%s)"
+        "  AND c.status IN ('open', 'held')) AS must_act FROM latest_scores s",
+        (policy.MUST_ACT,)).fetchall()
+    before = (_bands(rows, active, cfg) if active
+              else {r["account_id"]: r["band"] for r in rows})
+    after = _bands(rows, candidate, cfg)
+    return sum(after[a] != before[a] for a in after)

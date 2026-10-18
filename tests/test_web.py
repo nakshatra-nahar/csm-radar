@@ -3,29 +3,36 @@ webhooks and the tick endpoint, against the small trained world after a Monday s
 
 import dataclasses
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
-from radar import clock
-from radar.agent import brief, handlers
+from radar import clock, registry
+from radar.agent import brief, handlers, jobs, worker
 from radar.agent.jobs import Job
+from radar.bootstrap import seed_tenants_and_users
 from radar.config import load_settings
 from radar.db import Database, owner_connect
 from radar.ingest import webhooks
 from radar.scoring import score_tenant
 from radar.sim.names import INJECTION_ACCOUNT_NAME
 from radar.tenants import tenant_id
+from radar.web import queries
 from radar.web.app import CSP, create_app
 from tests.conftest import (
     WEB_PASSWORD,
     WORKER_PASSWORD,
     _role_dsn,
+    add_case,
     add_event,
     fresh_database,
+    train_world,
+    world_database,
 )
 from tests.payloads import golden
 
@@ -42,10 +49,16 @@ def settings(**changes):
 
 
 @pytest.fixture(scope="module")
-def web(trained_world_db):
-    """Hearthline and tallyworks swept on a Monday (lists frozen, backlog opened) after a
-    run a week earlier; template briefs for one CSM's list; kitewire left unswept."""
-    w, db = trained_world_db, trained_world_db["db"]
+def web(small_world_dir):
+    """Its own trained small world (the web tests write to it), with hearthline and
+    tallyworks swept on a Monday (lists frozen, backlog opened) after a run a week earlier;
+    template briefs for one CSM's list; kitewire left unswept."""
+    with world_database(small_world_dir) as world:
+        yield from _swept(train_world(world))
+
+
+def _swept(w):
+    db = w["db"]
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("RADAR_DATA_DIR", str(w["data_dir"]))
         mp.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -80,18 +93,18 @@ def one(web, sql, *args):
     return web.owner.execute(sql, args).fetchone()
 
 
-def client_as(web, user_id) -> TestClient:
+def client_as(web, user_id, **kwargs) -> TestClient:
     """A client logged in as the user, through the login form."""
     u = one(web, "SELECT tenant_id, id FROM users WHERE id = %s", user_id)
-    c = TestClient(web.app)
+    c = TestClient(web.app, **kwargs)
     c.post("/login", data={"passcode": PASSCODE})
     assert c.post("/login/user", data={"user": f"{u['tenant_id']}:{u['id']}"}).status_code == 200
     return c
 
 
 def user_of(web, tid, role):
-    return one(web, "SELECT id FROM users WHERE tenant_id = %s AND role = %s ORDER BY email"
-               " LIMIT 1", tid, role)["id"]
+    return one(web, "SELECT id FROM users WHERE tenant_id = %s AND role = %s AND active"
+               " AND sf_user_id IS NOT NULL ORDER BY email LIMIT 1", tid, role)["id"]
 
 
 def own_account(web):
@@ -127,19 +140,40 @@ def test_login_requires_passcode_and_sets_session(web):
     assert c.get("/week", follow_redirects=False).status_code == 303
 
 
+ROUTES = ("/week", "/book", "/team", "/ops", "/model", "/dictionary", "own", "other",
+          "promote")
 ROLE_ROUTE_MATRIX = [
     (role, route, status) for role, row in {
-        "csm": (200, 200, 200, 404), "manager": (200, 200, 200, 404),
-        "admin": (200, 200, 200, 200)}.items()
-    for route, status in zip(("/week", "/book", "own", "other"), row, strict=True)]
+        "csm": (200, 200, 404, 404, 200, 200, 200, 404, 404),
+        "manager": (200, 200, 200, 404, 200, 200, 200, 404, 404),
+        "admin": (200, 200, 200, 200, 200, 200, 200, 200, 200)}.items()
+    for route, status in zip(ROUTES, row, strict=True)]
+
+
+def candidate(web, coef_scale=1.0):
+    """A new hearthline candidate model: the active artifact with its coefficients scaled."""
+    active = one(web, "SELECT artifact, manifest FROM models WHERE tenant_id = %s"
+                 " AND status = 'active'", HEARTH)
+    artifact = active["artifact"] | {"coef": [c * coef_scale for c in active["artifact"]["coef"]]}
+    return one(web, "INSERT INTO models (tenant_id, version, status, artifact, manifest)"
+               " SELECT %s, max(version) + 1, 'candidate', %s, %s FROM models"
+               " WHERE tenant_id = %s RETURNING id", HEARTH, Jsonb(artifact),
+               Jsonb(active["manifest"]), HEARTH)["id"]
 
 
 @pytest.mark.parametrize("role,route,status", ROLE_ROUTE_MATRIX)
 def test_role_route_matrix(web, role, route, status):
     who = {"csm": web.csm, "manager": web.manager, "admin": user_of(web, HEARTH, "admin")}
+    c = client_as(web, who[role])
+    if route == "promote":
+        model = candidate(web)
+        assert c.post(f"/admin/models/{model}/promote").status_code == status
+        promoted = one(web, "SELECT status FROM models WHERE id = %s", model)["status"]
+        assert promoted == ("active" if status == 200 else "candidate")
+        return
     path = {"own": f"/accounts/{own_account(web)}",
             "other": f"/accounts/{other_account(web)}"}.get(route, route)
-    assert client_as(web, who[role]).get(path).status_code == status
+    assert c.get(path).status_code == status
 
 
 def test_idor_other_tenant_account_is_404(web):
@@ -224,16 +258,15 @@ def test_pages_render_empty_states(web):
     assert "No list for you this week" in c.get("/week").text
 
 
-def open_case_of(web):
-    """An open case on the CSM's list, and its account."""
-    return one(web, "SELECT c.id, c.account_id FROM worklist_items i JOIN cases c"
-               " ON c.id = i.case_id JOIN worklists w ON w.id = i.worklist_id"
-               " WHERE w.user_id = %s AND c.status = 'open' ORDER BY i.position LIMIT 1",
-               web.csm)
+def new_case(web, account_id=None):
+    """A fresh open case on one of the CSM's accounts (a unique kind, so tests never share one)."""
+    account = account_id or own_account(web)
+    case = add_case(web.owner, HEARTH, account, f"test_{uuid.uuid4().hex[:8]}", "save_call", [])
+    return {"id": case, "account_id": account}
 
 
 def test_outcome_logging_closes_case_and_audits(web):
-    case = open_case_of(web)
+    case = new_case(web)
     c = client_as(web, web.csm)
     url = f"/accounts/{case['account_id']}/cases/{case['id']}/outcome"
     assert c.post(url, data={"outcome": "sent_flowers"}).status_code == 400
@@ -249,22 +282,24 @@ def test_outcome_logging_closes_case_and_audits(web):
 
 
 def test_dismissal_creates_a_suppression(web):
-    case = open_case_of(web)
+    case = new_case(web)
     c = client_as(web, web.csm)
     url = f"/accounts/{case['account_id']}/cases/{case['id']}/dismiss"
     assert c.post(url, data={}).status_code == 400  # a reason is required
     assert c.post(url, data={"reason": "not_a_risk"}).status_code == 200
     assert one(web, "SELECT status FROM cases WHERE id = %s", case["id"])["status"] == "dismissed"
-    s = one(web, "SELECT * FROM suppressions WHERE account_id = %s AND lifted_at IS NULL",
-            case["account_id"])
-    assert (s["created_by"], s["reason"]) == (web.csm, "not_a_risk")
+    audit = one(web, "SELECT after FROM audit_log WHERE entity_type = 'suppressions'"
+                " AND after->>'account_id' = %s ORDER BY id DESC LIMIT 1",
+                str(case["account_id"]))["after"]
+    assert (audit["created_by"], audit["reason"]) == (str(web.csm), "not_a_risk")
 
 
 def test_draft_edit_then_approve_sends_the_filled_preview(web):
     draft = one(web, "SELECT o.id, a.id AS account_id, t.first_name FROM outbox o"
                 " JOIN cases c ON c.id = o.case_id JOIN accounts a ON a.id = c.account_id"
                 " JOIN contacts t ON t.id = o.to_contact_id WHERE o.case_id = ANY(%s)"
-                " AND o.status = 'draft' AND o.kind = 'customer_email' LIMIT 1", web.cases)
+                " AND o.status = 'draft' AND o.kind = 'customer_email' AND c.status = 'open'"
+                " LIMIT 1", web.cases)
     c = client_as(web, web.csm)
     base = f"/accounts/{draft['account_id']}"
     name = one(web, "SELECT name FROM users WHERE id = %s", web.csm)["name"]
@@ -303,10 +338,13 @@ def test_webhook_rejects_bad_signature_and_routes_tenant_by_kid(web):
     assert quarantined["n"] == 0
 
 
-def test_tick_endpoint_requires_the_bearer(web):
+def test_tick_endpoint_requires_the_bearer_and_runs_a_job(web, tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DATA_DIR", str(tmp_path))  # no feed: feed_tick delivers nothing
     with fresh_database() as dsn:
-        app = create_app(settings(worker_dsn=_role_dsn(dsn, "radar_worker", WORKER_PASSWORD)),
-                         web.web_db)  # the worker Database is created on first use
+        worker_dsn = _role_dsn(dsn, "radar_worker", WORKER_PASSWORD)
+        seeder = Database(worker_dsn)
+        seed_tenants_and_users(dsn, seeder, ["kitewire"])
+        app = create_app(settings(worker_dsn=worker_dsn), web.web_db)  # worker db made lazily
         c = TestClient(app)
         try:
             assert c.post("/internal/tick").status_code == 401
@@ -314,10 +352,19 @@ def test_tick_endpoint_requires_the_bearer(web):
             assert c.get("/internal/tick", headers=bad).status_code == 401
             ok = {"Authorization": "Bearer tick-secret"}
             for method in (c.get, c.post):  # Vercel cron GETs, GitHub Actions POSTs
+                with seeder.tenant_tx(KITE) as conn:
+                    job = jobs.enqueue(conn, "sla_check", KITE, {}, dedupe_key="sla_check")
                 r = method("/internal/tick", headers=ok)
-                assert r.status_code == 200 and r.json()["jobs"] == 0
+                assert r.status_code == 200 and r.json()["jobs"] >= 1
+                with seeder.system_tx() as conn:
+                    assert conn.execute("SELECT status FROM jobs WHERE id = %s",
+                                        (job,)).fetchone()["status"] == "done"
+            with app.state.db_worker.system_tx() as conn:
+                assert conn.execute("SELECT current_user AS u").fetchone()["u"] == "radar_worker"
         finally:
-            app.state.db_worker.close()
+            seeder.close()
+            if app.state.db_worker is not None:
+                app.state.db_worker.close()
     unset = TestClient(create_app(settings(tick_secret=None), web.web_db, web.db))
     assert unset.post("/internal/tick", headers=ok).status_code == 503
 
@@ -327,8 +374,8 @@ def test_tick_and_app_refuse_an_unsafe_worker_role(web):
     ok = {"Authorization": "Bearer tick-secret"}
     with fresh_database() as dsn:
         app = create_app(settings(worker_dsn=dsn), web.web_db)
-        with pytest.raises(RuntimeError, match="unsafe"):
-            TestClient(app).post("/internal/tick", headers=ok)
+        r = TestClient(app).post("/internal/tick", headers=ok)
+        assert r.status_code == 503 and "unsafe" in r.json()["detail"]
         assert app.state.db_worker is None  # the refused pool is closed, not kept
         owner_db = Database(dsn)
         try:
@@ -346,3 +393,225 @@ def test_csp_header_present(web):
                    " frame-ancestors 'none'")
     health = TestClient(web.app).get("/healthz")
     assert health.status_code == 200 and health.json() == {"ok": True}
+
+
+# --- Part A review minors (Ruling AO) -------------------------------------------------------
+
+def suppressions(web, account_id) -> int:
+    return one(web, "SELECT count(*) AS n FROM suppressions WHERE account_id = %s",
+               account_id)["n"]
+
+
+def test_closing_a_case_is_race_free(web, monkeypatch):
+    case = new_case(web)
+    c = client_as(web, web.csm)
+    base = f"/accounts/{case['account_id']}/cases/{case['id']}"
+    assert c.post(f"{base}/outcome", data={"outcome": "called"}).status_code == 200
+    before = suppressions(web, case["account_id"])
+    # a second post that read the case as open just before the first one closed it
+    monkeypatch.setattr(queries, "case_of", lambda conn, a, cid: {"id": cid, "status": "open"})
+    assert c.post(f"{base}/outcome", data={"outcome": "met"}).status_code == 409
+    assert c.post(f"{base}/dismiss", data={"reason": "not_a_risk"}).status_code == 409
+    closes = one(web, "SELECT count(*) AS n FROM audit_log WHERE entity_type = 'cases'"
+                 " AND entity_id = %s AND action = 'update'", str(case["id"]))
+    assert closes["n"] == 1
+    assert one(web, "SELECT outcome FROM cases WHERE id = %s", case["id"])["outcome"] == "called"
+    assert suppressions(web, case["account_id"]) == before
+
+
+def test_one_click_outcome_returns_to_week_and_never_off_site(web):
+    c = client_as(web, web.csm)
+    assert 'name="next" value="/week"' in c.get("/week").text
+    for nxt, location in (("/week", "/week"), ("https://evil.example/", None), ("//evil", None)):
+        case = new_case(web)
+        r = c.post(f"/accounts/{case['account_id']}/cases/{case['id']}/outcome",
+                   data={"outcome": "called", "next": nxt}, follow_redirects=False)
+        assert r.headers["location"] == (location or f"/accounts/{case['account_id']}")
+
+
+def test_pages_use_the_tenant_currency_column(web):
+    """tenants.currency is the one source; the config copy must not be read."""
+    web.owner.execute("UPDATE tenants SET config = jsonb_set(config, '{currency}', '\"XXX\"')"
+                      " WHERE id = %s", (HEARTH,))
+    try:
+        page = client_as(web, web.csm).get(f"/accounts/{own_account(web)}").text
+    finally:
+        web.owner.execute("UPDATE tenants SET config = jsonb_set(config, '{currency}',"
+                          " to_jsonb(currency)) WHERE id = %s", (HEARTH,))
+    assert "XXX" not in page and "USD " in page
+
+
+def test_session_user_is_rechecked_on_every_request(web):
+    uid = one(web, "INSERT INTO users (tenant_id, email, name, role) VALUES (%s, %s,"
+              " 'Rechecked User', 'csm') RETURNING id", HEARTH,
+              f"{uuid.uuid4().hex[:8]}@hearthline.io")["id"]
+    c = client_as(web, uid)
+    assert c.get("/ops").status_code == 404
+    web.owner.execute("UPDATE users SET role = 'admin' WHERE id = %s", (uid,))
+    assert c.get("/ops").status_code == 200  # the new role applies at once
+    web.owner.execute("UPDATE users SET active = false WHERE id = %s", (uid,))
+    r = c.get("/book", follow_redirects=False)
+    assert (r.status_code, r.headers["location"]) == (303, "/login")
+
+
+def peer_csm(web):
+    """Another CSM on the same manager's team."""
+    return one(web, "SELECT id FROM users WHERE manager_id = %s AND id <> %s AND role = 'csm'"
+               " AND active AND sf_user_id IS NOT NULL ORDER BY email LIMIT 1", web.manager,
+               web.csm)["id"]
+
+
+def test_in_tenant_writes_need_the_book(web):
+    case = new_case(web)
+    draft = one(web, "SELECT o.id, c.account_id FROM outbox o JOIN cases c ON c.id = o.case_id"
+                " WHERE o.case_id = ANY(%s) AND o.status = 'draft' AND c.status = 'open'"
+                " AND o.kind = 'customer_email' ORDER BY o.id DESC LIMIT 1", web.cases)
+    peer = client_as(web, peer_csm(web))  # same team, someone else's book
+    base = f"/accounts/{case['account_id']}/cases/{case['id']}"
+    d = f"/accounts/{draft['account_id']}/drafts/{draft['id']}"
+    for url, data in ((f"{base}/outcome", {"outcome": "called"}),
+                      (f"{base}/dismiss", {"reason": "not_a_risk"}),
+                      (f"{d}/edit", {"subject": "x", "body": "y"}), (f"{d}/approve", {})):
+        assert peer.post(url, data=data).status_code == 404
+    assert one(web, "SELECT status FROM cases WHERE id = %s", case["id"])["status"] == "open"
+    assert one(web, "SELECT status, subject FROM outbox WHERE id = %s", draft["id"])[
+        "status"] == "draft"
+    manager = client_as(web, web.manager)
+    assert manager.post(f"{base}/outcome", data={"outcome": "met"}).status_code == 200
+    elsewhere = new_case(web, other_account(web))
+    other = f"/accounts/{elsewhere['account_id']}/cases/{elsewhere['id']}/outcome"
+    assert manager.post(other, data={"outcome": "met"}).status_code == 404
+    admin = client_as(web, user_of(web, HEARTH, "admin"))
+    assert admin.post(other, data={"outcome": "met"}).status_code == 200
+
+
+def test_html_errors_render_the_page_and_machine_routes_keep_json(web, monkeypatch):
+    c = client_as(web, web.csm, raise_server_exceptions=False)
+    r = c.get(f"/accounts/{other_account(web)}")
+    assert r.status_code == 404 and r.headers["content-type"].startswith("text/html")
+    assert "Not found" in r.text and "/static/style.css" in r.text
+    case = new_case(web)
+    web.owner.execute("UPDATE cases SET status = 'done' WHERE id = %s", (case["id"],))
+    r = c.post(f"/accounts/{case['account_id']}/cases/{case['id']}/outcome",
+               data={"outcome": "called"})
+    assert r.status_code == 409 and "no longer open" in r.text and "<main" in r.text
+    monkeypatch.setattr(queries, "book", lambda conn, band: 1 / 0)
+    r = c.get("/book")
+    assert r.status_code == 500 and "Something went wrong" in r.text
+    assert "ZeroDivisionError" not in r.text
+    hook = TestClient(web.app).post("/webhooks/stripe", content=b"{}")
+    assert hook.status_code == 401 and hook.json() == {"detail": "Unauthorized"}
+    monkeypatch.setattr(worker, "run_for", lambda *args, **kwargs: 1 / 0)
+    tick = TestClient(web.app, raise_server_exceptions=False).post(
+        "/internal/tick", headers={"Authorization": "Bearer tick-secret"})
+    assert tick.status_code == 500 and tick.json() == {"detail": "Internal Server Error"}
+
+
+# --- team, ops, model card, dictionary (Part B) ---------------------------------------------
+
+def test_team_page_shows_the_manager_team_only(web):
+    client_as(web, web.csm).get("/week")  # the CSM opens this week's list
+    page = client_as(web, web.manager).get("/team").text
+    team = web.owner.execute("SELECT name, manager_id FROM users WHERE tenant_id = %s"
+                             " AND role = 'csm' AND sf_user_id IS NOT NULL", (HEARTH,)).fetchall()
+    assert all((u["name"] in page) == (u["manager_id"] == web.manager) for u in team)
+    row = page.split(one(web, "SELECT name FROM users WHERE id = %s", web.csm)["name"], 1)[1]
+    assert "opened " in row.split("</tr>", 1)[0]
+    assert "Expected ARR at risk" in page and "Last week" in page
+    assert "no run a week earlier" not in page  # the backfill run a week before the sweep
+    assert "Renewals in the next 90 days" in page and "USD " in page
+    assert "SLA breaches" in page and "Overflow" in page and "Dismissed this week" in page
+
+
+def test_team_page_lists_risky_accounts_without_a_working_owner(web):
+    left = one(web, "INSERT INTO users (tenant_id, email, name, role, manager_id, active)"
+               " VALUES (%s, %s, 'Departed Csm', 'csm', %s, false) RETURNING id", HEARTH,
+               f"{uuid.uuid4().hex[:8]}@hearthline.io", web.manager)["id"]
+    red = web.owner.execute(
+        "SELECT a.id, a.name, a.owner_user_id FROM latest_scores s JOIN accounts a"
+        " ON a.id = s.account_id WHERE s.tenant_id = %s AND s.band IN ('red', 'unknown')"
+        " AND a.owner_user_id <> %s ORDER BY a.name LIMIT 2", (HEARTH, web.csm)).fetchall()
+    try:
+        web.owner.execute("UPDATE accounts SET owner_user_id = %s WHERE id = %s",
+                          (left, red[0]["id"]))
+        web.owner.execute("UPDATE accounts SET owner_user_id = NULL WHERE id = %s",
+                          (red[1]["id"],))
+        manager = client_as(web, web.manager).get("/team").text.split("without a working", 1)[1]
+        admin = client_as(web, user_of(web, HEARTH, "admin")).get("/team").text
+        admin = admin.split("without a working", 1)[1]
+    finally:
+        for a in red:
+            web.owner.execute("UPDATE accounts SET owner_user_id = %s WHERE id = %s",
+                              (a["owner_user_id"], a["id"]))
+    names = [a["name"].replace("&", "&amp;") for a in red]
+    assert names[0] in manager and names[1] not in manager  # a departed report's account
+    assert names[0] in admin and names[1] in admin and "no owner" in admin
+
+
+def test_ops_page_and_incident_acknowledgement(web):
+    incident = one(web, "INSERT INTO incidents (tenant_id, kind, source, opened_at) VALUES"
+                   " (%s, 'source_stale', 'web_test', %s) RETURNING id", HEARTH, clock.now())["id"]
+    admin = client_as(web, user_of(web, HEARTH, "admin"))
+    page = admin.get("/ops").text
+    for heading in ("Sources", "Quarantine", "Identity matches by method", "Jobs",
+                    "LLM spend today", "Incidents", "Models", "Agent activity"):
+        assert heading in page
+    assert "zendesk external id" in page or "domain" in page  # match methods counted
+    assert f"/admin/incidents/{incident}/ack" in page
+    url = f"/admin/incidents/{incident}/ack"
+    assert client_as(web, web.manager).post(url).status_code == 404
+    assert admin.post(url).status_code == 200
+    row = one(web, "SELECT acknowledged_by FROM incidents WHERE id = %s", incident)
+    assert row["acknowledged_by"] == user_of(web, HEARTH, "admin")
+    assert admin.post(url).status_code == 409
+    audit = one(web, "SELECT actor FROM audit_log WHERE entity_type = 'incidents'"
+                " AND entity_id = %s AND action = 'update'", str(incident))
+    assert audit["actor"] == f"user:{user_of(web, HEARTH, 'admin')}"
+
+
+def test_promote_shows_band_changes_first_then_promotes(web):
+    same, flipped = candidate(web), candidate(web, coef_scale=-1.0)
+    admin_id = user_of(web, HEARTH, "admin")
+    admin = client_as(web, admin_id)
+    page = admin.get("/ops").text
+
+    def changes(model_id):
+        form = page.split(f"/admin/models/{model_id}/promote", 1)[1]
+        return int(form.split("Would change band for <b>", 1)[1].split("<", 1)[0])
+    assert changes(same) == 0  # the active model's own artifact changes nothing
+    assert changes(flipped) > 0
+    old = one(web, "SELECT id FROM models WHERE tenant_id = %s AND status = 'active'", HEARTH)
+    assert admin.post(f"/admin/models/{flipped}/promote").status_code == 200
+    assert one(web, "SELECT status FROM models WHERE id = %s", old["id"])["status"] == "retired"
+    new = one(web, "SELECT status, promoted_by FROM models WHERE id = %s", flipped)
+    assert (new["status"], new["promoted_by"]) == ("active", f"user:{admin_id}")
+    assert admin.post(f"/admin/models/{flipped}/promote").status_code == 404  # not a candidate
+    # put the original model back for the tests that follow
+    web.owner.execute("UPDATE models SET status = 'retired' WHERE id = %s", (flipped,))
+    web.owner.execute("UPDATE models SET status = 'active' WHERE id = %s", (old["id"],))
+
+
+def test_model_card_and_dictionary_render_markdown_with_html_escaped(web, monkeypatch):
+    hearth = client_as(web, web.csm)
+    assert "<h1>Model card: hearthline</h1>" in hearth.get("/model").text
+    assert "<h1>Model card: tallyworks</h1>" in client_as(web, user_of(web, TALLY, "csm")).get(
+        "/model").text
+    kite = client_as(web, user_of(web, KITE, "csm")).get("/model").text
+    assert "No model: rules only" in kite and "integration_broken" in kite
+    page = hearth.get("/dictionary").text
+    assert "<table>" in page and "usage_drop" in page
+    monkeypatch.setattr(registry, "render_dictionary_md", lambda: "# D\n\n<script>x()</script>")
+    page = hearth.get("/dictionary").text
+    assert "&lt;script&gt;x()&lt;/script&gt;" in page and "<script>" not in page
+
+
+def test_team_and_ops_render_empty_states(web):
+    admin = client_as(web, user_of(web, KITE, "admin"))  # kitewire: never swept, no model
+    team = admin.get("/team")
+    assert team.status_code == 200 and "No scores yet" in team.text
+    ops = admin.get("/ops")
+    assert ops.status_code == 200 and "No models: this tenant is ranked by rules only" in ops.text
+    boss = one(web, "INSERT INTO users (tenant_id, email, name, role) VALUES (%s, %s,"
+               " 'Lonely Manager', 'manager') RETURNING id", HEARTH,
+               f"{uuid.uuid4().hex[:8]}@hearthline.io")["id"]
+    assert "No CSMs on this team" in client_as(web, boss).get("/team").text

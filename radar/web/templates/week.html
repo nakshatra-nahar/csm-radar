@@ -43,7 +43,7 @@
     <tr>
       <th scope="row"><a href="/accounts/{{ r.account_id }}">{{ r.name }}</a></th>
       <td class="n">{{ money(r.arr_minor, tenant.currency) }}</td>
-      <td>{{ r.term_end or '—' }}</td>
+      <td class="nw">{{ r.term_end or '—' }}</td>
       <td>{{ band(r.band) }}</td>
       <td class="n">{{ num(r.lift, '{:.1f}×') }}</td>
       <td>{% if r.weeks_listed <= 1 %}<span class="tag new">new</span>{% else %}week {{ r.weeks_listed }}{% endif %}</td>
@@ -58,6 +58,7 @@
       <td>
         {% if r.case_id and r.case_status == "open" %}
         <form class="oneclick" method="post" action="/accounts/{{ r.account_id }}/cases/{{ r.case_id }}/outcome">
+          <input type="hidden" name="next" value="/week">
           {% for o in ("called", "emailed", "met") %}
           <button type="submit" name="outcome" value="{{ o }}">{{ o|capitalize }}<span class="vh"> {{ r.name }}</span></button>
           {% endfor %}

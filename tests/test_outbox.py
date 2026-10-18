@@ -110,3 +110,19 @@ def test_approval_fills_first_name_and_sender_name(owner_conn, worker_db, brief_
     approve(worker_db, w, draft["id"], w["csm"])
     sent = owner_conn.execute("SELECT body FROM outbox WHERE id = %s", (draft["id"],)).fetchone()
     assert sent["body"] == preview["body"]
+
+
+def test_empty_first_name_falls_back_and_subject_is_filled(owner_conn, worker_db, brief_world):
+    w = brief_world
+    draft = draft_of(owner_conn, brief.generate_brief(worker_db, w["tid"], w["case"], None))
+    owner_conn.execute("UPDATE contacts SET first_name = '' WHERE id = %s",
+                       (draft["to_contact_id"],))
+    owner_conn.execute("UPDATE outbox SET subject = 'For {first_name} from {sender_name}'"
+                       " WHERE id = %s", (draft["id"],))
+    sender = owner_conn.execute("SELECT name FROM users WHERE id = %s",
+                                (w["csm"],)).fetchone()["name"]
+    approve(worker_db, w, draft["id"], w["csm"])
+    sent = owner_conn.execute("SELECT subject, body FROM outbox WHERE id = %s",
+                              (draft["id"],)).fetchone()
+    assert sent["body"].startswith("Hi there,")
+    assert sent["subject"] == f"For there from {sender}"

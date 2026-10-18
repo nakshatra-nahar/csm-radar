@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if message %}<p>{{ message }}</p>
+{% elif title == "Not found" %}<p>There is nothing here, or you do not have access to it.</p>
+{% else %}<p>Please go back and try again.</p>{% endif %}
+<p><a href="/week">Back to My week</a></p>
+{% endblock %}

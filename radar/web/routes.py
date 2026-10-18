@@ -15,6 +15,7 @@ router = APIRouter()
 OUTCOMES = ("called", "emailed", "met", "no_action")
 DISMISSALS = ("not_a_risk", "already_handled")
 BANDS = ("red", "yellow", "green", "unknown", "not_in_window")
+RETURN_PAGES = {"/week"}  # where a case form may send the user back to
 
 
 def _authorized(conn, user: dict, account_id: UUID, action: str) -> dict:
@@ -25,8 +26,10 @@ def _authorized(conn, user: dict, account_id: UUID, action: str) -> dict:
     return a
 
 
-def _back(account_id: UUID) -> RedirectResponse:
-    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+def _back(account_id: UUID, next_page: str = "") -> RedirectResponse:
+    """Back to the account, or to a page of ours named by the form (never off-site)."""
+    target = next_page if next_page in RETURN_PAGES else f"/accounts/{account_id}"
+    return RedirectResponse(target, status_code=303)
 
 
 @router.get("/")
@@ -41,6 +44,9 @@ def week(request: Request, user: User):
         tenant = queries.tenant(conn, user["tenant_id"])
         start = queries.week_start(tenant["timezone"])
         wl = queries.worklist(conn, user["id"], start)
+        if wl and wl["viewed_at"] is None:  # the team page reports whether the list was opened
+            conn.execute("UPDATE worklists SET viewed_at = %s WHERE id = %s",
+                         (clock.now(), wl["id"]))
         team = rbac.team_ids(conn, user["id"])
         rows = [r for r in (queries.worklist_rows(conn, wl) if wl else [])
                 if rbac.authorize(user, r["owner_user_id"], team, "view")]
@@ -68,7 +74,7 @@ def _account_page(request: Request, user: dict, account_id: UUID, recompute=None
         account = _authorized(conn, user, account_id, "view")
         tenant = queries.tenant(conn, user["tenant_id"])
         score = queries.score(conn, account_id)
-        currency = tenant["config"]["currency"]
+        currency = tenant["currency"]
         ctx = {"tenant": tenant, "account": account, "score": score, "currency": currency,
                "model": queries.active_model(conn),
                "changes": score and scoring.diff_runs(conn, account_id, score["run_id"]),
@@ -99,29 +105,33 @@ def recompute(request: Request, user: User, account_id: UUID):
     return _account_page(request, user, account_id, recompute=result)
 
 
-def _open_case(conn, user: dict, account_id: UUID, case_id: UUID, action: str) -> dict:
+def _close_case(conn, user: dict, account_id: UUID, case_id: UUID, action: str, status: str,
+                outcome: str | None, reason: str | None) -> None:
+    """Close an open case of the account. The status check is in the UPDATE itself, so of two
+    concurrent closes exactly one wins and writes the audit row; the other is a 409."""
     _authorized(conn, user, account_id, action)
-    case = queries.case_of(conn, account_id, case_id)
-    if case is None:
+    if queries.case_of(conn, account_id, case_id) is None:
         raise HTTPException(404)
-    if case["status"] != "open":
+    closed = conn.execute(
+        "UPDATE cases SET status = %s, outcome = %s, outcome_reason = %s, closed_at = %s,"
+        " closed_by = %s WHERE id = %s AND status = 'open'",
+        (status, outcome, reason, clock.now(), user["id"], case_id)).rowcount
+    if not closed:
         raise HTTPException(409, "This case is no longer open.")
-    return case
 
 
 @router.post("/accounts/{account_id}/cases/{case_id}/outcome")
 def log_outcome(request: Request, user: User, account_id: UUID, case_id: UUID,
-                outcome: str = Form(""), reason: str = Form("")):
+                outcome: str = Form(""), reason: str = Form(""),
+                next_page: str = Form("", alias="next")):
     """Closes the case with what the CSM did; the cases trigger writes the audit row."""
     reason = reason.strip()
     if outcome not in OUTCOMES or (outcome == "no_action" and not reason):
         raise HTTPException(400, "Pick an outcome; 'no action' needs a reason.")
     with tx(request, user) as conn:
-        _open_case(conn, user, account_id, case_id, "log_outcome")
-        conn.execute("UPDATE cases SET status = 'done', outcome = %s, outcome_reason = %s,"
-                     " closed_at = %s, closed_by = %s WHERE id = %s",
-                     (outcome, reason or None, clock.now(), user["id"], case_id))
-    return _back(account_id)
+        _close_case(conn, user, account_id, case_id, "log_outcome", "done", outcome,
+                    reason or None)
+    return _back(account_id, next_page)
 
 
 @router.post("/accounts/{account_id}/cases/{case_id}/dismiss")
@@ -131,15 +141,11 @@ def dismiss(request: Request, user: User, account_id: UUID, case_id: UUID, reaso
     if reason not in DISMISSALS:
         raise HTTPException(400, "Pick a reason to dismiss.")
     with tx(request, user) as conn:
-        _open_case(conn, user, account_id, case_id, "dismiss")
-        now = clock.now()
-        conn.execute("UPDATE cases SET status = 'dismissed', outcome_reason = %s,"
-                     " closed_at = %s, closed_by = %s WHERE id = %s",
-                     (reason, now, user["id"], case_id))
+        _close_case(conn, user, account_id, case_id, "dismiss", "dismissed", None, reason)
         conn.execute("INSERT INTO suppressions (account_id, created_by, reason, p_at_dismiss,"
                      " created_at) VALUES (%s, %s, %s, (SELECT p FROM latest_scores"
                      " WHERE account_id = %s), %s)",
-                     (account_id, user["id"], reason, account_id, now))
+                     (account_id, user["id"], reason, account_id, clock.now()))
     return _back(account_id)
 
 

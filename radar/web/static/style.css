@@ -50,6 +50,7 @@ h4 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .empty { color: var(--muted); font-style: italic; padding: 12px 0; }
 .error { color: var(--red); }
 code { font: 12px var(--mono); overflow-wrap: anywhere; }
+.nw { white-space: nowrap; }
 
 /* stamped chips: text always present, colour only reinforces it */
 .band, .tag { display: inline-block; font: 600 11px/1.6 var(--mono); text-transform: uppercase;
@@ -132,6 +133,30 @@ label { font-size: 13px; font-weight: 600; }
 .result.ok { color: var(--green); font-weight: 600; }
 .result.bad { color: var(--red); font-weight: 600; }
 
+/* team and ops */
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        margin: 4px 0; }
+.kpis dd { font: 600 22px/1.2 var(--mono); }
+.list .arr { display: block; font-size: 11px; color: var(--muted); }
+.counts { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.counts li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0;
+             border-bottom: 1px solid var(--rule); }
+.counts .empty { display: block; border: 0; }
+.incident { padding: 6px 0; border-bottom: 1px solid var(--rule); margin: 0; }
+.incident form { margin-left: auto; }
+.activity li { grid-template-columns: max-content max-content 1fr; }
+
+/* rendered markdown: the model card and data dictionary */
+.doc { max-width: 980px; }
+.doc h1 { margin-top: 6px; }
+.doc table { border-collapse: collapse; font-size: 13px; }
+.doc .scroll { display: inline-block; max-width: 100%; margin: 8px 0; vertical-align: top; }
+.dictionary td:nth-child(7) { min-width: 24em; }  /* the definition */
+.doc th, .doc td { border: 1px solid var(--rule); padding: 4px 8px; text-align: left;
+                   vertical-align: top; }
+.doc th { background: var(--paper); font-size: 12px; }
+.doc li { margin: 2px 0; }
+
 /* login */
 .login { max-width: 420px; margin: 8vh auto 0; }
 .login h1 { font-size: 44px; margin-bottom: 0; }
@@ -145,4 +170,6 @@ label { font-size: 13px; font-weight: 600; }
   main { padding: 14px 16px 32px 16px; border-left-width: 0; border-top: 2px solid var(--margin); }
   .timeline li { grid-template-columns: 1fr auto; }
   .timeline .text { grid-column: 1 / -1; }
+  .list tbody th { min-width: 9.5em; }  /* names wrap less; the table scrolls instead */
+  .doc table { min-width: 640px; }
 }

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% if html %}
+{# our own committed markdown, rendered with raw HTML escaped (oversight._markdown) #}
+<article class="doc {{ kind }}">{{ html|safe }}</article>
+{% else %}
+<h1>{{ title }}</h1>
+<p class="note">No model: rules only. {{ tenant.name }} has no trained model yet (a cold start),
+  so each book is ranked by the rules heuristic.</p>
+<h2>The rules heuristic</h2>
+<p><b>{{ rules.name }}</b> v{{ rules.version }} ({{ rules.unit }}): {{ rules.description }}</p>
+<p><a href="/dictionary">Data dictionary</a></p>
+{% endif %}
+{% endblock %}

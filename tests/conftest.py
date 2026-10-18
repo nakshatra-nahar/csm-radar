@@ -140,39 +140,49 @@ def small_world_dir(tmp_path_factory):
     return out
 
 
-@pytest.fixture(scope="session")
-def small_world_db(small_world_dir):
-    """A fresh database with the small world seeded and replayed up to history_end.
-
-    Yields {"owner_dsn", "db" (radar_worker Database), "data_dir", "stats" {slug: IngestStats}}.
-    """
+@contextmanager
+def world_database(data_dir):
+    """A fresh database with the world in data_dir seeded and replayed up to history_end,
+    dropped afterwards. Yields {"owner_dsn", "db" (radar_worker Database), "data_dir",
+    "stats" {slug: IngestStats}}."""
     with fresh_database() as dsn:
         db = Database(_role_dsn(dsn, "radar_worker", WORKER_PASSWORD))
         try:
             slugs = list(TENANTS)
             seed_tenants_and_users(dsn, db, slugs)
-            stats = {s: replay_feed(db, tenant_id(s), small_world_dir, HISTORY_END) for s in slugs}
-            yield {"owner_dsn": dsn, "db": db, "data_dir": small_world_dir, "stats": stats}
+            stats = {s: replay_feed(db, tenant_id(s), data_dir, HISTORY_END) for s in slugs}
+            yield {"owner_dsn": dsn, "db": db, "data_dir": data_dir, "stats": stats}
         finally:
             db.close()
 
 
-@pytest.fixture(scope="session")
-def trained_world_db(small_world_db):
-    """small_world_db plus a model trained and promoted per tenant as of history_end.
+def train_world(world: dict) -> dict:
+    """The world plus a model trained and promoted per tenant as of history_end.
 
     The small world has ~33 matured decisions per tenant, under the default gate of 100, so
     each tenant's config gate is lowered to 20 first. At that size some behavioural signs flip
     (they hold from scale 0.3, see test_signs_hold_on_small_world), so the sign gate is lifted
     here too. Adds "models" {slug: model id | None}.
     """
-    with owner_connect(small_world_db["owner_dsn"], autocommit=True) as conn:
+    with owner_connect(world["owner_dsn"], autocommit=True) as conn:
         conn.execute("UPDATE tenants SET config = jsonb_set(config, '{model,min_decisions}', '20')")
-    db = small_world_db["db"]
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(model, "check_signs", lambda artifact: [])
-        return small_world_db | {"models": {s: train_and_promote(db, tenant_id(s), HISTORY_END)
-                                            for s in TENANTS}}
+        return world | {"models": {s: train_and_promote(world["db"], tenant_id(s), HISTORY_END)
+                                   for s in TENANTS}}
+
+
+@pytest.fixture(scope="session")
+def small_world_db(small_world_dir):
+    """A fresh database with the small world seeded and replayed up to history_end."""
+    with world_database(small_world_dir) as world:
+        yield world
+
+
+@pytest.fixture(scope="session")
+def trained_world_db(small_world_db):
+    """small_world_db plus a model trained and promoted per tenant (train_world)."""
+    return train_world(small_world_db)
 
 
 # --- briefs and outbox (Task 10) ------------------------------------------------------------

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "macros.html" import band as chip, money %}
+{% block title %}Team{% endblock %}
+{% block content %}
+{% set cur = tenant.currency %}
+<h1>Team <span class="sub">{{ csms|length }} CSMs{% if run %} · scores as of {{ run.as_of.strftime('%Y-%m-%d') }}{% endif %}</span></h1>
+{% if not model %}<p class="note">No active model for {{ tenant.name }}: bands come from rules only, so there is no p × ARR.</p>{% endif %}
+
+{% if not run %}
+<p class="empty">No scores yet. The first daily sweep fills this page.</p>
+{% else %}
+<section aria-labelledby="risk-h">
+  <h2 id="risk-h">ARR at risk</h2>
+  <dl class="facts kpis">
+    <div><dt>Expected ARR at risk (p × ARR), this week</dt><dd>{{ money(at_risk.now, cur) }}</dd></div>
+    <div><dt>Last week</dt><dd>{{ money(at_risk.before, cur) if run.prev else 'no run a week earlier' }}</dd></div>
+    <div><dt>ARR in red, this week</dt><dd>{{ money(at_risk.red_now, cur) }}</dd></div>
+    <div><dt>Last week</dt><dd>{{ money(at_risk.red_before, cur) if run.prev else 'no run a week earlier' }}</dd></div>
+  </dl>
+</section>
+
+<section aria-labelledby="renew-h">
+  <h2 id="renew-h">Renewals in the next {{ renewal_days }} days</h2>
+  {% if not renewals %}
+  <p class="empty">No renewals in the next {{ renewal_days }} days.</p>
+  {% else %}
+  <ul class="inline renewals">
+    {% for b in bands if b in renewals %}
+    <li>{{ chip(b) }} {{ renewals[b].n }} accounts, {{ money(renewals[b].arr, cur) }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+<section aria-labelledby="csms-h">
+  <h2 id="csms-h">By CSM</h2>
+  {% if not csms %}
+  <p class="empty">No CSMs on this team.</p>
+  {% else %}
+  <div class="scroll">
+  <table class="list">
+    <thead><tr>
+      <th scope="col">CSM</th>
+      {% for b in ("red", "yellow", "green", "unknown") %}<th scope="col" class="n">{{ chip(b) }}</th>{% endfor %}
+      <th scope="col" class="n">Must-acts open</th><th scope="col" class="n">SLA breaches</th>
+      <th scope="col" class="n">Overflow</th><th scope="col" class="n">Dismissed this week</th>
+      <th scope="col">List this week</th>
+    </tr></thead>
+    <tbody>
+    {% for c in csms %}
+    {% set book = by_csm[c.id] %}
+    <tr>
+      <th scope="row">{{ c.name }}</th>
+      {% for b in ("red", "yellow", "green", "unknown") %}
+      <td class="n">{% if b in book %}{{ book[b].n }}<span class="arr">{{ money(book[b].arr, cur) }}</span>{% else %}—{% endif %}</td>
+      {% endfor %}
+      <td class="n">{{ c.must_acts }}</td>
+      <td class="n">{% if c.sla_breaches %}<span class="tag gap">{{ c.sla_breaches }} late</span>{% else %}0{% endif %}</td>
+      <td class="n">{{ c.overflow }}</td>
+      <td class="n">{{ c.dismissals }}</td>
+      <td>{% if not c.listed %}not frozen{% elif c.viewed_at %}opened {{ c.viewed_at.strftime('%a %H:%M') }}{% else %}<span class="tag gap">not opened</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+{% if run %}
+<section aria-labelledby="orphans-h">
+  <h2 id="orphans-h">Red or unknown, without a working owner</h2>
+  {% if not orphans %}
+  <p class="empty">Every red or unknown account has an active owner.</p>
+  {% else %}
+  <div class="scroll">
+  <table class="list">
+    <thead><tr><th scope="col">Account</th><th scope="col">Band</th><th scope="col" class="n">ARR</th><th scope="col">Renewal</th><th scope="col">Owner</th></tr></thead>
+    <tbody>
+    {% for a in orphans %}
+    <tr>
+      <th scope="row">{% if user.role == "admin" %}<a href="/accounts/{{ a.id }}">{{ a.name }}</a>{% else %}{{ a.name }}{% endif %}</th>
+      <td>{{ chip(a.band) }}</td>
+      <td class="n">{{ money(a.arr_minor, cur) }}</td>
+      <td class="nw">{{ a.term_end or '—' }}</td>
+      <td>{{ 'deactivated user' if a.owner_user_id else 'no owner' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

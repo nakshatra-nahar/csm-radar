@@ -211,15 +211,18 @@ def generate_brief(db, tenant_id: UUID, case_id: UUID, client: LLMClient | None)
 
 def filled(conn, outbox_id: UUID, user_id: UUID) -> dict:
     """The draft's subject and body as they would go out: {first_name} is the recipient's
-    first name ("there" if unknown) and {sender_name} the approving user's name. str.replace,
-    not format(): an LLM body may hold other braces."""
+    first name ("there" if unknown or empty) and {sender_name} the approving user's name, in
+    the subject and the body. str.replace, not format(): an LLM body may hold other braces."""
     row = conn.execute(
-        "SELECT o.subject, o.body, coalesce(t.first_name, 'there') AS first_name,"
+        "SELECT o.subject, o.body, coalesce(NULLIF(t.first_name, ''), 'there') AS first_name,"
         " (SELECT name FROM users WHERE id = %s) AS sender FROM outbox o"
         " LEFT JOIN contacts t ON t.tenant_id = o.tenant_id AND t.id = o.to_contact_id"
         " WHERE o.id = %s", (user_id, outbox_id)).fetchone()
-    body = row["body"].replace("{first_name}", row["first_name"])
-    return {"subject": row["subject"], "body": body.replace("{sender_name}", row["sender"])}
+
+    def fill(text: str) -> str:
+        return text.replace("{first_name}", row["first_name"]).replace("{sender_name}",
+                                                                      row["sender"])
+    return {"subject": fill(row["subject"]), "body": fill(row["body"])}
 
 
 def approve_and_send(conn, outbox_id: UUID, user_id: UUID) -> None:
@@ -242,8 +245,9 @@ def approve_and_send(conn, outbox_id: UUID, user_id: UUID) -> None:
     if not draft["reachable"]:
         raise ValueError("the recipient is no longer an allowed contact")
     now = clock.now()
+    out = filled(conn, outbox_id, user_id)
     conn.execute("UPDATE outbox SET status = 'approved', approved_by = %s, approved_at = %s,"
-                 " body = %s WHERE id = %s",
-                 (user_id, now, filled(conn, outbox_id, user_id)["body"], outbox_id))
+                 " subject = %s, body = %s WHERE id = %s",
+                 (user_id, now, out["subject"], out["body"], outbox_id))
     conn.execute("UPDATE outbox SET status = 'sent', sent_at = %s WHERE id = %s",
                  (now, outbox_id))

@@ -31,12 +31,20 @@ class SessionUser(TypedDict):
 
 
 def current_user(request: Request) -> SessionUser:
-    """The session's user as rbac.authorize expects it."""
+    """The session's user as rbac.authorize expects it. Role and name are re-read on every
+    request (one primary-key lookup), so deactivating a user or changing a role applies at
+    once; a deactivated user is logged out."""
     s = request.session
     if "user_id" not in s:
         raise LoginRequired
-    return {"id": UUID(s["user_id"]), "tenant_id": UUID(s["tenant_id"]), "role": s["role"],
-            "name": s["name"]}
+    uid, tid = UUID(s["user_id"]), UUID(s["tenant_id"])
+    with request.app.state.db.tenant_tx(tid) as conn:
+        row = conn.execute("SELECT role, name FROM users WHERE id = %s AND active",
+                           (uid,)).fetchone()
+    if row is None:
+        s.clear()
+        raise LoginRequired
+    return {"id": uid, "tenant_id": tid, "role": row["role"], "name": row["name"]}
 
 
 User = Annotated[SessionUser, Depends(current_user)]
@@ -47,8 +55,9 @@ def tx(request: Request, user: SessionUser):
     return request.app.state.db.tenant_tx(user["tenant_id"], actor=f"user:{user['id']}")
 
 
-def render(request: Request, name: str, status_code: int = 200, **context):
-    return templates.TemplateResponse(request, name, context, status_code=status_code)
+def render(request: Request, name: str, status_code: int = 200, headers=None, **context):
+    return templates.TemplateResponse(request, name, context, status_code=status_code,
+                                      headers=headers)
 
 
 def _picker(request: Request) -> list[dict]:

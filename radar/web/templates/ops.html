@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% from "macros.html" import day %}
+{% block title %}Ops{% endblock %}
+{% block content %}
+{% macro stamp(at) %}{{ at.strftime('%Y-%m-%d %H:%M UTC') if at else 'never' }}{% endmacro %}
+<h1>Ops <span class="sub">{{ tenant.name }}</span></h1>
+<p class="meta"><a href="/model">Model card</a> · <a href="/dictionary">Data dictionary</a></p>
+
+<section aria-labelledby="src-h">
+  <h2 id="src-h">Sources</h2>
+  {% if not sources %}
+  <p class="empty">No data has arrived yet.</p>
+  {% else %}
+  <div class="scroll">
+  <table class="list">
+    <thead><tr>
+      <th scope="col">Source</th><th scope="col">Freshness</th><th scope="col">Watermark (last delivery)</th>
+      <th scope="col">Last ingest</th><th scope="col" class="n">Received</th><th scope="col" class="n">Duplicates</th>
+      <th scope="col" class="n">Conflicts</th><th scope="col" class="n">Twins</th>
+    </tr></thead>
+    <tbody>
+    {% for s in sources %}
+    <tr>
+      <th scope="row">{{ s.source }}</th>
+      <td>{% if s.source in stale %}<span class="tag gap">stale</span>{% else %}fresh{% endif %}</td>
+      <td>{{ stamp(s.last_deliver_at) }}</td>
+      <td>{{ stamp(s.last_ingest_at) }}</td>
+      {% for k in ("received", "duplicates", "conflicts", "twins") %}<td class="n">{{ s.counters.get(k, 0) }}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<div class="cols">
+<section aria-labelledby="q-h">
+  <h2 id="q-h">Quarantine (unresolved)</h2>
+  <ul class="counts">{% for r in quarantine %}<li><span>{{ r.reason|replace('_', ' ') }}</span> <b class="n">{{ r.n }}</b></li>{% else %}<li class="empty">Nothing in quarantine.</li>{% endfor %}</ul>
+</section>
+<section aria-labelledby="m-h">
+  <h2 id="m-h">Identity matches by method</h2>
+  <ul class="counts">{% for r in links %}<li><span>{{ r.method|replace('_', ' ') }}</span> <b class="n">{{ r.n }}</b></li>{% else %}<li class="empty">No identity links yet.</li>{% endfor %}</ul>
+</section>
+<section aria-labelledby="j-h">
+  <h2 id="j-h">Jobs</h2>
+  <ul class="counts">{% for r in jobs %}<li><span>{{ r.status }}</span> <b class="n">{{ r.n }}</b></li>{% else %}<li class="empty">No jobs.</li>{% endfor %}</ul>
+</section>
+<section aria-labelledby="llm-h">
+  <h2 id="llm-h">LLM spend today</h2>
+  <ul class="counts">
+    <li><span>calls</span> <b class="n">{{ llm.calls }}</b></li>
+    <li><span>tokens</span> <b class="n">{{ '{:,}'.format(llm.tokens) }}</b></li>
+    <li><span>cost</span> <b class="n">${{ '%.4f'|format(llm.cost_usd) }}</b></li>
+  </ul>
+</section>
+</div>
+
+<section aria-labelledby="inc-h">
+  <h2 id="inc-h">Incidents</h2>
+  {% for i in incidents %}
+  <div class="row incident">
+    <span class="tag {{ 'gap' if not i.closed_at }}">{{ 'open' if not i.closed_at else 'closed' }}</span>
+    <b>{{ i.kind|replace('_', ' ') }}</b>{% if i.source %} · {{ i.source }}{% endif %}
+    <span class="meta">opened {{ stamp(i.opened_at) }}</span>
+    {% if i.acknowledged_at %}<span class="meta">acknowledged {{ stamp(i.acknowledged_at) }}</span>
+    {% elif not i.closed_at %}
+    <form method="post" action="/admin/incidents/{{ i.id }}/ack"><button type="submit">Acknowledge<span class="vh"> {{ i.kind|replace('_', ' ') }}</span></button></form>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="empty">No incidents this week.</p>
+  {% endfor %}
+</section>
+
+<section aria-labelledby="models-h">
+  <h2 id="models-h">Models</h2>
+  {% if not models %}
+  <p class="empty">No models: this tenant is ranked by rules only.</p>
+  {% else %}
+  <div class="scroll">
+  <table class="list">
+    <thead><tr><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Trained</th><th scope="col">Promoted</th><th scope="col">Promote</th></tr></thead>
+    <tbody>
+    {% for m in models %}
+    <tr>
+      <th scope="row">v{{ m.version }}</th>
+      <td><span class="tag">{{ m.status }}</span></td>
+      <td>{{ day(m.trained_at) }}</td>
+      <td>{% if m.promoted_at %}{{ day(m.promoted_at) }} by {{ m.promoted_by }}{% else %}—{% endif %}</td>
+      <td>{% if m.status == "candidate" %}
+        <form method="post" action="/admin/models/{{ m.id }}/promote" class="row">
+          <span>Would change band for <b>{{ m.band_changes }}</b> accounts.</span>
+          <button type="submit">Promote v{{ m.version }}</button>
+        </form>
+      {% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<section aria-labelledby="agent-h">
+  <h2 id="agent-h">Agent activity</h2>
+  {% if not agent %}<p class="empty">The agent has not acted yet.</p>{% else %}
+  <ol class="timeline activity">
+    {% for a in agent %}
+    <li><time datetime="{{ a.at.isoformat() }}">{{ stamp(a.at) }}</time>
+      <span class="src">{{ a.action }}</span>
+      <span class="text">{{ a.entity_type }}{% if a.status %} → {{ a.status }}{% endif %} <code>{{ a.entity_id }}</code></span></li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  <h3>Internal digests <span class="hint">(dry run, read only)</span></h3>
+  <ul class="counts">{% for d in digests %}<li><span>{{ d.kind|replace('_', ' ') }}: {{ d.subject }}</span> <b>{{ d.status }}</b></li>{% else %}<li class="empty">No digests yet.</li>{% endfor %}</ul>
+</section>
+{% endblock %}

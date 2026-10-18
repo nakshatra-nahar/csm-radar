@@ -90,5 +90,8 @@ def tick(request: Request):
     given = request.headers.get("authorization", "").encode()
     if not hmac.compare_digest(given, f"Bearer {settings.tick_secret}".encode()):
         raise HTTPException(401)
-    return worker.run_for(_worker_db(request.app), worker_id="vercel-tick",
-                          budget_s=settings.tick_budget_s)
+    try:
+        db = _worker_db(request.app)
+    except RuntimeError as e:  # an unsafe role: fail closed, and say why
+        return JSONResponse({"detail": str(e)}, status_code=503)
+    return worker.run_for(db, worker_id="vercel-tick", budget_s=settings.tick_budget_s)
