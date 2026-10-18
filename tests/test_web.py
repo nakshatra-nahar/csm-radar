@@ -924,6 +924,10 @@ def test_screenshots_take_the_chrome_path_from_the_flag_or_env(monkeypatch):
     assert shots.parse_args([*base, "--chrome", "/usr/bin/chromium"]).chrome == "/usr/bin/chromium"
     monkeypatch.delenv("RADAR_CHROME")
     assert shots.parse_args(base).chrome == shots.CHROME
+    docs = shots.parse_args([*base, "--docs", "--height", "week=1110", "--height", "trace=3560",
+                             "--crop", "trace=0,2790,1440,3560"])
+    assert docs.height == {"week": 1110, "trace": 3560}
+    assert docs.crop == {"trace": (0, 2790, 1440, 3560)}
 
 
 def test_tick_worker_pool_takes_the_pgbouncer_setting(web):

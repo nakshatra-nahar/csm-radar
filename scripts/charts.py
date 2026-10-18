@@ -11,10 +11,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TENANTS = ("hearthline", "tallyworks")
+# gbm is left out: it is a diagnostic in eval/*.json (how much a flexible model would add),
+# not a policy anyone serves
 POLICIES = {"random": "random", "renewal_sort": "renewal-date\nsort", "arr_sort": "ARR sort",
             "rules": "rules", "model": "model", "oracle": "oracle\n(latent state)"}
 COLOURS = ("#0072B2", "#E69F00")  # Okabe-Ito blue and orange: safe for colour-blind readers
 LABELS = ("white", "black")  # value labels that keep contrast on each bar colour
+SHORT_BAR = 6  # %: below this a label inside the bar would sit on the background
 
 
 def recall_rows(ev: dict) -> list[tuple[str, float, float, float]]:
@@ -37,9 +40,10 @@ def recall_chart(evals: dict[str, dict], out: Path) -> None:
         err = [[100 * (r[1] - r[2]) for r in rows], [100 * (r[3] - r[1]) for r in rows]]
         ax.bar(xs, ys, width, color=COLOURS[i], label=f"{tenant} (K = {ev['k']})",
                yerr=err, capsize=3, error_kw={"elinewidth": 1, "ecolor": "#333333"})
-        for x, y in zip(xs, ys, strict=True):
-            ax.text(x, 2, f"{y:.0f}", ha="center", va="bottom", fontsize=9, color=LABELS[i],
-                    fontweight="bold")
+        for x, y, hi in zip(xs, ys, err[1], strict=True):
+            inside = y >= SHORT_BAR  # a short bar has no room: the label goes above its CI
+            ax.text(x, 2 if inside else y + hi + 1.5, f"{y:.0f}", ha="center", va="bottom",
+                    fontsize=9, color=LABELS[i] if inside else "black", fontweight="bold")
     ax.set_xticks(range(len(POLICIES)), POLICIES.values(), fontsize=11)
     ax.set_ylabel("Churned ARR on the top-K lists (%)", fontsize=11)
     ax.set_ylim(0, 100)
