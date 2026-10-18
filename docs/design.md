@@ -405,7 +405,7 @@ Briefs are generated only for must-act cases and frozen model slots, and cached 
    - no URL, email address, phone number, HTML or `[E#]` in the email; length caps hold.
 6. On failure, retry once with the errors. If that fails, use the deterministic template. With no API key, if `llm_enabled=false` for the tenant, or if the per-tenant daily token budget is spent, the template is used directly.
 7. Every attempt gets an `llm_calls` row: model, request id, stop_reason, all usage fields, and Decimal cost from a dated price table (Haiku 5.5 $0.10 in / $0.50 out per MTok, checked 2026-10-17).
-8. Rendering: autoescape stays on, `|safe` is never used, drafts are plain text, and the app sends a CSP header.
+8. Rendering: autoescape stays on, `|safe` is never used on database or LLM text (only on our own committed markdown, the model card and data dictionary, rendered with raw HTML disabled), drafts are plain text, and the app sends a CSP header.
 
 Customer email only ever reaches `outbox` as a draft. A CSM approves it, and the transport is a dry run. The deploy has no SMTP credentials, so dry-run sending is a physical fact, not a flag.
 
