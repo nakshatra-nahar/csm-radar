@@ -600,11 +600,15 @@ dependencies = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
-    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "python-multipart" },
-    { name = "scikit-learn" },
     { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+ml = [
+    { name = "pyarrow" },
+    { name = "scikit-learn" },
 ]
 
 [package.dev-dependencies]
@@ -625,12 +629,13 @@ requires-dist = [
     { name = "pandas" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.10" },
     { name = "psycopg-pool", specifier = ">=3.2" },
-    { name = "pyarrow" },
+    { name = "pyarrow", marker = "extra == 'ml'" },
     { name = "pydantic", specifier = ">=2" },
     { name = "python-multipart" },
-    { name = "scikit-learn" },
+    { name = "scikit-learn", marker = "extra == 'ml'" },
     { name = "uvicorn", extras = ["standard"] },
 ]
+provides-extras = ["ml"]
 
 [package.metadata.requires-dev]
 dev = [

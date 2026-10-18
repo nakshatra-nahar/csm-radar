@@ -26,7 +26,7 @@ def _print(obj) -> None:
 
 
 def _worker_db(s: Settings) -> Database:
-    db = Database(s.worker_dsn)
+    db = Database(s.worker_dsn, pgbouncer=s.pgbouncer)
     with db.system_tx() as conn:  # design §4.3: never run the jobs as a role RLS would not bind
         assert_role_safety(conn)
     return db

@@ -23,6 +23,8 @@ def _ensure_roles(conn: psycopg.Connection, passwords: dict[str, str]) -> None:
                 " PASSWORD {}"
             ).format(sql.Identifier(role), sql.Literal(password))
         )
+        # every session of the role reads timestamptz in UTC, pooled or not (radar.db)
+        conn.execute(sql.SQL("ALTER ROLE {} SET timezone TO 'UTC'").format(sql.Identifier(role)))
 
 
 def migrate(owner_dsn: str, web_password: str, worker_password: str) -> list[str]:

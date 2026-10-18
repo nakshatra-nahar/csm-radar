@@ -70,7 +70,8 @@ async def webhook(source: str, request: Request):
 def _worker_db(app) -> Database:
     with _worker_lock:  # two first ticks at once must not open two pools
         if app.state.db_worker is None:
-            db = Database(app.state.settings.worker_dsn)
+            s = app.state.settings
+            db = Database(s.worker_dsn, pgbouncer=s.pgbouncer)
             try:  # design §4.3: never run the jobs as a role RLS would not bind
                 with db.system_tx() as conn:
                     assert_role_safety(conn)

@@ -3,7 +3,6 @@ is a numpy dot product, so a score is exactly the intercept plus its contributio
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
 
 from radar import clock, registry
 from radar.registry import FEATURE_NAMES
@@ -14,6 +13,9 @@ LABEL_VERSION = "churn_label_90d:v1"
 def fit(df: pd.DataFrame, features: list[str] = FEATURE_NAMES, C: float = 1.0) -> dict:
     """Train on df[features] and df['label']. Missing values get the training mean, which is
     also the centring mean, so an imputed feature has z = 0 and contributes exactly 0."""
+    # imported here: serving (predict) must run without the `ml` extra, as on Vercel
+    from sklearn.linear_model import LogisticRegression
+
     X = df[features].astype(float)
     impute = X.mean().fillna(0.0)  # a feature never observed in training: 0
     filled = X.fillna(impute)

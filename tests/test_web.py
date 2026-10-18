@@ -907,3 +907,14 @@ def test_screenshots_take_the_chrome_path_from_the_flag_or_env(monkeypatch):
     assert shots.parse_args([*base, "--chrome", "/usr/bin/chromium"]).chrome == "/usr/bin/chromium"
     monkeypatch.delenv("RADAR_CHROME")
     assert shots.parse_args(base).chrome == shots.CHROME
+
+
+def test_tick_worker_pool_takes_the_pgbouncer_setting(web):
+    """Neon's pooled endpoint is PgBouncer in transaction mode: no prepared statements."""
+    worker_dsn = _role_dsn(web.owner_dsn, "radar_worker", WORKER_PASSWORD)
+    db = hooks._worker_db(create_app(settings(worker_dsn=worker_dsn, pgbouncer=True), web.web_db))
+    try:
+        with db.pool.connection() as conn:
+            assert conn.prepare_threshold is None
+    finally:
+        db.close()

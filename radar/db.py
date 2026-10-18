@@ -19,12 +19,21 @@ def owner_connect(dsn: str, **kwargs) -> psycopg.Connection:
 
 
 class Database:
-    def __init__(self, dsn: str, min_size: int = 1, max_size: int = 8) -> None:
+    def __init__(self, dsn: str, min_size: int = 1, max_size: int = 8,
+                 pgbouncer: bool = False) -> None:
         # autocommit: transaction() below is the only transaction boundary.
+        kwargs = {"autocommit": True, "row_factory": dict_row}
+        if pgbouncer:
+            # Transaction mode: the next transaction may run on another server connection, which
+            # has not prepared our statements; and PgBouncer refuses untracked startup options,
+            # so the timezone comes from the app role's own setting (migrate).
+            kwargs["prepare_threshold"] = None
+        else:
+            kwargs["options"] = UTC_SESSION
         self.pool = ConnectionPool(
             dsn,
             connection_class=Conn,
-            kwargs={"autocommit": True, "row_factory": dict_row, "options": UTC_SESSION},
+            kwargs=kwargs,
             min_size=min_size,
             max_size=max_size,
             open=True,

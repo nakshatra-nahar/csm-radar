@@ -1,0 +1,20 @@
+# Runs the worker on Vercel every 15 minutes (Ruling Y): POST /internal/tick with the bearer.
+# Needs repository secrets RADAR_URL (https://<project>.vercel.app) and TICK_SECRET.
+# GitHub can start a schedule late and pauses it after 60 days without repository activity;
+# the daily Vercel cron in vercel.json is the backstop.
+name: tick
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - run: >-
+          curl -fsS --max-time 290 -X POST
+          -H "Authorization: Bearer ${{ secrets.TICK_SECRET }}"
+          "${{ secrets.RADAR_URL }}/internal/tick"

@@ -13,18 +13,23 @@ dependencies = [
     "psycopg-pool>=3.2",
     "numpy",
     "pandas",
-    "scikit-learn",
-    "pyarrow",
     "pydantic>=2",
     "anthropic>=1.15,<2",
     "markdown",
 ]
+
+[project.optional-dependencies]
+# bootstrap, train, eval and the simulator only; Vercel installs without it (bundle size)
+ml = ["scikit-learn", "pyarrow"]
 
 [project.scripts]
 radar = "radar.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "ruff", "httpx"]
+
+[tool.vercel]
+entrypoint = "radar.web.asgi:app"
 
 [build-system]
 requires = ["hatchling"]

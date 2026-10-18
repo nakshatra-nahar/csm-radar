@@ -1,12 +1,75 @@
+# The always-on alternative to Vercel (docs/deploy.md, part B): `docker compose up --build`.
+# Secrets come from the environment or a .env file next to this one; the defaults suit a
+# local demo only. The db service alone is also the test database (`make db USE_DOCKER=1`).
+x-radar: &radar
+  build: .
+  image: radar  # built once, run as each service
+  environment: &radar-env
+    RADAR_OWNER_DSN: postgresql://postgres:postgres@db:5432/radar
+    RADAR_WEB_PASSWORD: ${RADAR_WEB_PASSWORD:-change-me-web}
+    RADAR_WORKER_PASSWORD: ${RADAR_WORKER_PASSWORD:-change-me-worker}
+    RADAR_SECRET_KEY: ${RADAR_SECRET_KEY:-change-me}
+    RADAR_DEMO_PASSCODE: ${RADAR_DEMO_PASSCODE:-change-me}
+    RADAR_WEBHOOK_SECRETS: ${RADAR_WEBHOOK_SECRETS:-}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    FEED_SOURCE: db  # bootstrap buffers the rest of the feed in the database
+
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: radar
     ports:
       - "54329:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d radar"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  bootstrap:  # one-shot: migrate, seed, replay, train, sweep; a re-run adds nothing
+    <<: *radar
+    environment:
+      <<: *radar-env
+      ROLE: bootstrap
+    volumes:
+      - feed:/app/data  # the generated world, so a re-run does not generate it again
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    <<: *radar
+    environment:
+      <<: *radar-env
+      ROLE: web --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:  # the long-lived worker: no tick schedule needed here
+    <<: *radar
+    environment:
+      <<: *radar-env
+      ROLE: worker
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  feed:

@@ -1,0 +1,44 @@
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:  # gitleaks scans the whole history on a manual run
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04  # ships PostgreSQL 16 client tools in /usr/lib/postgresql/16/bin
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 54329:5432  # the port the tests expect (tests/conftest.py)
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      RADAR_TEST_ADMIN_DSN: postgresql://postgres:postgres@localhost:54329/postgres
+      # radar push tests need pg_dump/pg_restore 16 to match the server; without them they skip
+      RADAR_TEST_PG_BIN: /usr/lib/postgresql/16/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.25"
+      - run: uv sync --frozen --extra ml
+      - run: uv run ruff check .
+      - name: pg_dump 16 is present (else the push tests would skip silently)
+        run: '"$RADAR_TEST_PG_BIN/pg_dump" --version | grep -q " 16\."'
+      - run: uv run pytest -q -m "not live_llm"  # slow tests included
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # scan the full history, not just the last commit
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

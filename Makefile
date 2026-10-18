@@ -11,8 +11,9 @@ else
 	@echo "  pg_ctl -D ~/.local/share/radar-pg16 -o \"-p 54329\" -l /tmp/radar-pg16.log start"
 endif
 
+# --extra ml: training, eval and the simulator need scikit-learn and pyarrow (pyproject.toml)
 test:
-	uv run pytest -q
+	uv run --extra ml pytest -q
 
 lint:
 	uv run ruff check .

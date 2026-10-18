@@ -3,9 +3,11 @@ import uuid
 import psycopg
 import pytest
 
-from radar.db import assert_role_safety, owner_connect
+from radar.config import load_settings
+from radar.db import Database, UnsafeRole, assert_role_safety, owner_connect
 from radar.migrate import migrate
-from tests.conftest import WEB_PASSWORD, WORKER_PASSWORD
+from radar.web.app import create_app
+from tests.conftest import WEB_PASSWORD, WORKER_PASSWORD, _role_dsn
 
 TENANT_TABLES_SQL = """
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
@@ -66,6 +68,29 @@ def test_app_roles_are_not_superuser_bypassrls_or_owner(web_db, worker_db, owner
             assert_role_safety(conn)
     with pytest.raises(RuntimeError):
         assert_role_safety(owner_conn)  # the test owner is a superuser
+
+
+@pytest.mark.parametrize("attrs, owns", [("BYPASSRLS", False), ("", True)])
+def test_web_and_worker_refuse_a_neon_style_owner(owner_dsn, owner_conn, attrs, owns):
+    """Neon's owner is no superuser: it bypasses RLS and owns the tables (after radar push).
+    Either one alone must stop the app from starting (Ruling AU)."""
+    role = f"owner_{uuid.uuid4().hex[:8]}"
+    owner_conn.execute(f"CREATE ROLE {role} LOGIN PASSWORD 'pw' NOSUPERUSER {attrs}")
+    if owns:
+        owner_conn.execute(f"CREATE TABLE {role}_t (id int); ALTER TABLE {role}_t OWNER TO {role}")
+    db = Database(_role_dsn(owner_dsn, role, "pw"))
+    try:
+        with pytest.raises(UnsafeRole):
+            create_app(load_settings(), db)  # as the web pool
+        web = Database(_role_dsn(owner_dsn, "radar_web", WEB_PASSWORD))
+        try:
+            with pytest.raises(UnsafeRole):
+                create_app(load_settings(), web, db)  # as the worker pool
+        finally:
+            web.close()
+    finally:
+        db.close()
+        owner_conn.execute(f"DROP TABLE IF EXISTS {role}_t; DROP ROLE {role}")
 
 
 def test_migrate_is_idempotent(owner_dsn):

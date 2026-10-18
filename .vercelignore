@@ -1,0 +1,6 @@
+# `vercel deploy` uploads the working tree; .env (local secrets) is not in Vercel's defaults.
+.env
+data/
+.superpowers/
+.pytest_cache/
+.ruff_cache/

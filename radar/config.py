@@ -4,7 +4,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+# libpq fills a parameter a DSN leaves out from PG* variables, which Vercel's Neon integration
+# sets to the owner's credentials (Ruling AU), so a role DSN must name every one itself.
+EXPLICIT = ("host", "port", "dbname", "user", "password")
 
 
 @dataclass(frozen=True)
@@ -24,12 +28,23 @@ class Settings:
     tick_secret: str | None  # bearer for /internal/tick; None disables the endpoint
     tick_budget_s: float
     production: bool  # session cookie is https-only
+    pgbouncer: bool  # PgBouncer in transaction mode (Neon pooled): no prepared statements
 
 
 def _parse_secrets(raw: str) -> dict[str, str]:
     """'kid1:secret1,kid2:secret2' -> {kid: secret}. Secrets may contain ':'."""
     pairs = (item.strip().split(":", 1) for item in raw.split(",") if item.strip())
     return {kid: secret for kid, secret in pairs}
+
+
+def _explicit_dsn(name: str, dsn: str, production: bool) -> str:
+    """dsn, if it names every parameter (and sslmode in production, so PGSSLMODE cannot turn
+    TLS off)."""
+    params = conninfo_to_dict(dsn)
+    missing = [k for k in EXPLICIT + (("sslmode",) if production else ()) if not params.get(k)]
+    if missing:
+        raise ValueError(f"{name} must set {', '.join(missing)} itself")
+    return dsn
 
 
 def load_settings() -> Settings:
@@ -41,12 +56,18 @@ def load_settings() -> Settings:
     feed_source = env("FEED_SOURCE", "files")
     if feed_source not in ("files", "db"):
         raise ValueError(f"FEED_SOURCE must be 'files' or 'db', not {feed_source!r}")
+    production = env("RADAR_ENV") == "production"
+    dsns = {}
+    for name, role, password in (("RADAR_WEB_DSN", "radar_web", web_password),
+                                 ("RADAR_WORKER_DSN", "radar_worker", worker_password)):
+        if production and not env(name):
+            raise ValueError(f"{name} is required in production")
+        dsns[name] = _explicit_dsn(name, env(name) or make_conninfo(
+            owner_dsn, user=role, password=password), production)
     return Settings(
         owner_dsn=owner_dsn,
-        web_dsn=env("RADAR_WEB_DSN")
-        or make_conninfo(owner_dsn, user="radar_web", password=web_password),
-        worker_dsn=env("RADAR_WORKER_DSN")
-        or make_conninfo(owner_dsn, user="radar_worker", password=worker_password),
+        web_dsn=dsns["RADAR_WEB_DSN"],
+        worker_dsn=dsns["RADAR_WORKER_DSN"],
         web_password=web_password,
         worker_password=worker_password,
         secret_key=env("RADAR_SECRET_KEY", "dev-only-secret-key"),
@@ -59,5 +80,6 @@ def load_settings() -> Settings:
         # Vercel cron sends CRON_SECRET; deployments set both names to the same value
         tick_secret=env("TICK_SECRET") or env("CRON_SECRET") or None,
         tick_budget_s=float(env("TICK_BUDGET_S", "240")),
-        production=env("RADAR_ENV") == "production",
+        production=production,
+        pgbouncer=env("RADAR_PGBOUNCER") == "1",
     )

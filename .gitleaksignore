@@ -1,0 +1,7 @@
+# Stripe idempotency keys in recorded test payloads, not secrets (gitleaks generic-api-key).
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_subscription_created_basil.json:generic-api-key:49
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_created_dahlia.json:generic-api-key:25
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_created_basil.json:generic-api-key:25
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_updated_basil.json:generic-api-key:28
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_created_pre_basil.json:generic-api-key:25
+3b619fe80d1768caaace09e75d9dde51c4eb86b9:tests/fixtures/payloads/stripe_customer_updated_pre_basil.json:generic-api-key:28

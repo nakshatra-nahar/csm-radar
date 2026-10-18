@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "radar/web/asgi.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{data/**,eval/**,tests/**,scripts/**,docs/[!m]*}"
+    }
+  },
+  "crons": [{ "path": "/internal/tick", "schedule": "0 13 * * *" }]
+}
