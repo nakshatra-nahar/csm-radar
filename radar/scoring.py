@@ -196,19 +196,29 @@ _ROW = ("SELECT s.run_id, s.features, s.contributions, r.model_id, r.manifest,"
         " ON r.tenant_id = s.tenant_id AND r.id = s.run_id WHERE s.account_id = %s AND ")
 
 
+def previous_run(conn, as_of) -> UUID | None:
+    """The newest done run at least 6 days before as_of: 'last week' for an account's what
+    changed and for the team page alike."""
+    row = conn.execute("SELECT id FROM score_runs WHERE status = 'done'"
+                       " AND as_of <= %s - interval '6 days'"
+                       " ORDER BY as_of DESC, finished_at DESC LIMIT 1", (as_of,)).fetchone()
+    return row and row["id"]
+
+
 def diff_runs(conn, account_id: UUID, run_id: UUID, prev_run_id: UUID | None = None) -> dict:
-    """What changed for the account since the previous run (default: its latest done run at
-    least 6 days older), per feature in log-odds, largest change first. Exact for a logistic
-    regression; an ineligible side has no contributions and counts as 0."""
+    """What changed for the account since the previous run (default: previous_run, the
+    tenant's newest done run at least 6 days older), per feature in log-odds, largest change
+    first. Exact for a logistic regression; an ineligible side has no contributions and
+    counts as 0."""
     now = conn.execute(_ROW + "s.run_id = %s", (account_id, run_id)).fetchone()
     if now is None:  # not scored by the run (a mid-week must-act on a new account)
         prev = None
     elif prev_run_id is not None:
         prev = conn.execute(_ROW + "s.run_id = %s", (account_id, prev_run_id)).fetchone()
     else:
-        prev = conn.execute(_ROW + "r.status = 'done' AND r.as_of <= %s - interval '6 days'"
-                            " ORDER BY r.as_of DESC, r.finished_at DESC LIMIT 1",
-                            (account_id, now["as_of"])).fetchone()
+        prev_run = previous_run(conn, now["as_of"])
+        prev = prev_run and conn.execute(_ROW + "s.run_id = %s",
+                                         (account_id, prev_run)).fetchone()
     if prev is None:
         return {"prev_run_id": None, "delta_logit_by_feature": {}, "changed_features": [],
                 "version_changes": {}}

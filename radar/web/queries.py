@@ -206,9 +206,8 @@ def latest_run(conn) -> dict | None:
     'last week' diff_runs compares with)."""
     run = conn.execute("SELECT run_id AS id, as_of FROM latest_scores LIMIT 1").fetchone()
     if run:
-        run["prev"] = conn.execute(
-            "SELECT id FROM score_runs WHERE status = 'done' AND as_of <= %s - interval '6 days'"
-            " ORDER BY as_of DESC, finished_at DESC LIMIT 1", (run["as_of"],)).fetchone()
+        prev = scoring.previous_run(conn, run["as_of"])
+        run["prev"] = prev and {"id": prev}
     return run
 
 
