@@ -101,11 +101,18 @@ def test_rules_only_tenant_scores(trained_world_db, owner):
     scored = rows(owner, run_id)
     assert scored and all(r["p"] is None and r["logit"] is None and r["lift"] is None
                           and r["rules_score"] is not None for r in scored)
+    must_act = {r["account_id"] for r in owner.execute(
+        "SELECT account_id FROM cases WHERE tenant_id = %s AND kind = ANY(%s)"
+        " AND status IN ('open', 'held') AND opened_at <= %s",
+        (KITEWIRE, policy.MUST_ACT, AS_OF)).fetchall()}
     for r in scored:
         if r["eligible"]:
             assert r["rank_in_book"] >= 1
-        if r["eligible"] and r["coverage"]["ok"] and r["band"] != "red":
-            assert r["band"] == ("yellow" if r["rules_score"] >= 1.5 else "green")
+        if r["eligible"] and r["coverage"]["ok"] and r["account_id"] not in must_act:
+            # band_rules: red at 3 points, yellow at 1.5
+            want = ("red" if r["rules_score"] >= 3 else "yellow" if r["rules_score"] >= 1.5
+                    else "green")
+            assert r["band"] == want, r
     assert {r["band"] for r in scored} <= BANDS
 
 
