@@ -85,10 +85,10 @@ All unforecastable causes pooled: model 19%, random 25% (21 decisions).
 |---|---|---|
 | point-in-time (deployed) | 64% | 0.768 |
 | hindsight: late data arrives on time | | 0.769 |
-| naive current-state: today's Salesforce row | 99% | 0.986 |
+| naive current-state: today's Salesforce row | 99% | 0.984 |
 
 Hindsight features use every record as if it had arrived when it happened: +0.001 AUC, so late arrivals barely change this world's weekly snapshots.
-The naive current-state model reads Type, ARR__c and Renewal_Date__c as they stand at history end into every snapshot, so a churned account is already a Former Customer; its +0.218 AUC is the optimism the as-of rule prevents.
+The naive current-state model sees each Salesforce account row (Type, ARR__c, Renewal_Date__c) as it stands at history end in every snapshot. The registry computes the same features from it, plus former_customer, so a churned account is already a Former Customer; its +0.216 AUC is the optimism the as-of rule prevents.
 
 ## Ablation: which sources matter
 
@@ -106,19 +106,19 @@ Each source's features removed in turn, model refit at every origin. A bigger dr
 
 Each week is scored by the model of the latest origin at or before it; every origin's training ended before these decisions.
 
-**Crestline Realty Group** (cause: crm_sync) decided 2026-07-24. Top 10 under the model from 2026-04-27 (12 weeks before); under renewal sort from 2026-07-06 (2 weeks before).
+**Crestline Realty Group** (cause: crm_sync) decided 2026-07-24. Top 10 under the model from 2026-04-13 (14 weeks before); under renewal sort from 2026-07-06 (2 weeks before).
 
-Weekly rank in the CSM's book over the 20 weeks before the decision (- means not yet in the renewal window):
+Weekly rank in the CSM's book over the 20 weeks before the decision (- means not yet in the renewal window; below floor means lift under the slot floor, so the model would not serve it):
 
 - renewal sort: -, -, -, -, 34, 32, 31, 30, 26, 25, 24, 23, 18, 17, 15, 13, 11, 10, 9, 9
-- model: -, -, -, -, 15, 16, 18, 10, 5, 3, 3, 3, 3, 1, 1, 1, 1, 6, 5, 5
+- model: -, -, -, -, 11, 10, 9, 6, 5, 3, 3, 3, 3, 1, 1, 1, 1, 6, 5, 5
 
 **Bayside Home Partners** (cause: crm_sync) decided 2026-08-10. Top 10 under the model from 2026-05-25 (11 weeks before); under renewal sort from 2026-08-03 (1 week before).
 
-Weekly rank in the CSM's book over the 20 weeks before the decision (- means not yet in the renewal window):
+Weekly rank in the CSM's book over the 20 weeks before the decision (- means not yet in the renewal window; below floor means lift under the slot floor, so the model would not serve it):
 
 - renewal sort: -, -, -, 32, 31, 30, 28, 26, 25, 25, 21, 20, 16, 15, 15, 14, 13, 12, 8, 7
-- model: -, -, -, 21, 24, 29, 28, 21, 9, 7, 9, 9, 8, 6, 4, 4, 7, 8, 9, 6
+- model: -, -, -, below floor, below floor, below floor, below floor, 13, 8, 7, 9, 9, 8, 6, 4, 4, 7, 7, 8, 4
 
 ## Outage week
 

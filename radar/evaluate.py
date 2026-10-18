@@ -31,8 +31,8 @@ from radar.registry import FEATURE_NAMES, FEATURES, rules_score
 from radar.sim.params import PARAMS
 from radar.tenants import TENANTS, tenant_id
 
-__all__ = ["rules_score", "topk_by_book", "slot_floor", "current_state", "run", "acceptance",
-           "render_model_card"]
+__all__ = ["rules_score", "topk_by_book", "slot_floor", "naive_frames", "current_state", "run",
+           "acceptance", "render_model_card"]
 
 POLICIES = ["random", "renewal_sort", "arr_sort", "rules", "model", "oracle", "gbm"]
 GROUPS = ["product", "zendesk", "gmail", "billing", "crm"]
@@ -113,28 +113,35 @@ def _oracle_fit(train: pd.DataFrame, test: pd.DataFrame, accounts, weekly) -> np
     return lr.predict_proba(Xt.fillna(X.mean()))[:, 1]
 
 
-def current_state(rows: pd.DataFrame, frames: Frames) -> pd.DataFrame:
-    """rows with the structural features re-read from each account's Salesforce row as it
-    stands at history end (Type, ARR__c, Renewal_Date__c), plus former_customer: what a naive
-    pipeline that joins today's CRM table to old snapshots would train on."""
+def naive_frames(frames: Frames) -> Frames:
+    """frames with each Salesforce account's history-end row visible from the first event on:
+    what a naive pipeline that joins today's CRM table to old snapshots would see."""
+    ev = frames.events
+    crm = ev["type"] == "crm.account"
+    start = ev["occurred_at"].min()
+    now = latest(ev[crm], HISTORY_END).assign(occurred_at=start, available_at=start)
+    return dataclasses.replace(frames, events=pd.concat([ev[~crm], now]).sort_values(
+        ["entity_id", "occurred_at", "version_key"], kind="stable"))
+
+
+def current_state(rows: pd.DataFrame, naive: pd.DataFrame, frames: Frames) -> pd.DataFrame:
+    """rows with every registry feature taken from naive (compute_features on naive_frames)
+    plus former_customer (Type at history end): what the naive pipeline trains on."""
     sf = latest(frames.events[frames.events["type"] == "crm.account"], HISTORY_END)
     ids = sf["entity_id"].str.removeprefix("sf_account:").map(
         frames.accounts.set_index("sf_account_id")["id"])
-    now = sf.set_index(ids).reindex(rows.index.get_level_values("account_id"))
-    T = rows.index.get_level_values("as_of")
-    arr, renewal = now["arr_minor"].astype(float), now["renewal_date"]
-    return rows.assign(
-        log_arr=np.log(arr.where(arr > 0) / 100).to_numpy(),
-        term_end_within_60d=((renewal - T) <= pd.Timedelta(days=60)).astype(float)
-        .where(renewal.notna()).to_numpy(),
-        former_customer=(now["status"] == "Former Customer").astype(float).to_numpy())
+    status = sf.set_index(ids)["status"].reindex(rows.index.get_level_values("account_id"))
+    return rows.assign(**naive.reindex(rows.index)[FEATURE_NAMES],
+                       former_customer=(status == "Former Customer").astype(float).to_numpy())
 
 
-def _naive_fit(train: pd.DataFrame, test: pd.DataFrame, frames: Frames) -> np.ndarray:
+def _naive_fit(train: pd.DataFrame, test: pd.DataFrame, naive: pd.DataFrame,
+               frames: Frames) -> np.ndarray:
     cols = [*FEATURE_NAMES, "former_customer"]
-    X = current_state(train, frames)[cols]
+    X = current_state(train, naive, frames)[cols]
     lr = make_pipeline(SimpleImputer(), StandardScaler(), LogisticRegression(max_iter=2000))
-    return lr.fit(X, train["label"]).predict_proba(current_state(test, frames)[cols])[:, 1]
+    return lr.fit(X, train["label"]).predict_proba(
+        current_state(test, naive, frames)[cols])[:, 1]
 
 
 def _without(group: str) -> list[str]:
@@ -160,6 +167,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     matured, grid = _grids(tenant, truth)
     feats = compute_features(frames, tenant, grid)  # once; sliced per origin
     hind = compute_features(frames, tenant, matured, hindsight=True)
+    naive = compute_features(naive_frames(frames), tenant, matured)
     decisions = churn_decisions(frames)  # full hindsight: test labels only
     as_of = feats.index.get_level_values("as_of")
     step = step_weeks * WEEK
@@ -177,7 +185,7 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
             model=model.predict(artifacts[origin], test)[0], rules=rules_score(test),
             gbm=gbm.predict_proba(test[FEATURE_NAMES])[:, 1],
             hindsight=model.predict(hind_model, hind.reindex(test.index))[0],
-            naive=_naive_fit(train, test, frames),
+            naive=_naive_fit(train, test, naive, frames),
             **{f"without_{g}": model.predict(model.fit(train, _without(g)), test)[0]
                for g in GROUPS},
             **{f"c_{c}": model.predict(model.fit(train, C=c), test)[0] for c in C_GRID})
@@ -248,7 +256,8 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
         churned = truth["accounts"].dropna(subset=["decision_at"])
         result["unforecastable_share"] = float(churned.loc[~churned["involuntary"],
                                                            "unforecastable"].mean())
-        result["vp_cases"] = _vp_cases(feats, artifacts, truth["accounts"], sf, k)
+        result["vp_cases"] = _vp_cases(feats, artifacts, truth["accounts"], sf, k,
+                                       tenant["config"])
         result["identity"] = _identity(frames, truth["identity"])
     return result
 
@@ -360,10 +369,11 @@ def _by_cause(t: pd.DataFrame, accounts: pd.DataFrame, sf: pd.Series) -> dict:
 
 
 def _vp_cases(feats: pd.DataFrame, artifacts: dict, accounts: pd.DataFrame, sf: pd.Series,
-              k: int) -> list[dict]:
+              k: int, cfg: dict) -> list[dict]:
     """Each VP account's weekly rank (1 = top) in its owner's book over the 20 weeks before
     its decision, under renewal_sort and the model of the latest origin at or before that
-    week (every origin's training ends long before the decisions). None: not in window."""
+    week (every origin's training ends long before the decisions). None: not in window;
+    "below floor": lift under the slot floor (Ruling AP), so the model would not serve it."""
     by_sf = pd.Series(sf.index, index=sf.to_numpy())
     starts = sorted(artifacts)
     as_of = feats.index.get_level_values("as_of")
@@ -378,10 +388,12 @@ def _vp_cases(feats: pd.DataFrame, artifacts: dict, accounts: pd.DataFrame, sf: 
             week = {"as_of": T, "renewal_sort": None, "model": None, "book_size": None}
             if mine.any():
                 artifact = artifacts[max([o for o in starts if o <= T], default=starts[0])]
-                p = pd.Series(model.predict(artifact, book)[0], index=book.index)
+                book = book.assign(model=model.predict(artifact, book)[0])
+                key = (book["model"] * book["arr_minor"]).where(slot_floor(book, "model", cfg))
                 renewal = -(book["term_end"] - book["as_of"]).dt.days
                 week["renewal_sort"] = int(_rank(book, renewal)[mine].iloc[0])
-                week["model"] = int(_rank(book, p * book["arr_minor"])[mine].iloc[0])
+                week["model"] = ("below floor" if key[mine].isna().iloc[0]
+                                 else int(_rank(book, key)[mine].iloc[0]))
                 owner = book.loc[mine, "owner_user_id"].iloc[0]
                 week["book_size"] = int((book["owner_user_id"] == owner).sum())
             weeks.append(week)
@@ -462,7 +474,8 @@ def _vp_lines(case: dict, k: int) -> list[str]:
         return ", ".join("-" if w[policy] is None else str(w[policy]) for w in weeks)
 
     def first(policy: str) -> str:
-        at = next((w["as_of"] for w in weeks if (w[policy] or k + 1) <= k), None)
+        at = next((w["as_of"] for w in weeks if isinstance(w[policy], int) and w[policy] <= k),
+                  None)
         if at is None:
             return "never"
         n = (decided - pd.Timestamp(at)).days // 7
@@ -471,7 +484,8 @@ def _vp_lines(case: dict, k: int) -> list[str]:
     return [f"**{case['name']}** (cause: {case['cause']}) decided {_day(decided)}. Top {k}"
             f" under the model {first('model')}; under renewal sort {first('renewal_sort')}.",
             "", "Weekly rank in the CSM's book over the 20 weeks before the decision (- means"
-            " not yet in the renewal window):", "",
+            " not yet in the renewal window; below floor means lift under the slot floor, so the"
+            " model would not serve it):", "",
             f"- renewal sort: {ranks('renewal_sort')}", f"- model: {ranks('model')}", ""]
 
 
@@ -581,10 +595,11 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             "Hindsight features use every record as if it had arrived when it happened:"
             f" {h['hindsight_auc'] - h['pit_auc']:+.3f} AUC, so late arrivals barely change"
             " this world's weekly snapshots.",
-            "The naive current-state model reads Type, ARR__c and Renewal_Date__c as they"
-            " stand at history end into every snapshot, so a churned account is already a"
-            f" Former Customer; its {h['naive_auc'] - h['pit_auc']:+.3f} AUC is the optimism"
-            " the as-of rule prevents.")
+            "The naive current-state model sees each Salesforce account row (Type, ARR__c,"
+            " Renewal_Date__c) as it stands at history end in every snapshot. The registry"
+            " computes the same features from it, plus former_customer, so a churned account"
+            f" is already a Former Customer; its {h['naive_auc'] - h['pit_auc']:+.3f} AUC is"
+            " the optimism the as-of rule prevents.")
     section("Ablation: which sources matter",
             "Each source's features removed in turn, model refit at every origin. A bigger"
             " drop means the integration matters more.", "",

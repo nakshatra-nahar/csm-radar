@@ -231,9 +231,9 @@
  "hindsight_vs_pit": {
   "pit_auc": 0.6713646684055832,
   "hindsight_auc": 0.6723419740906932,
-  "naive_auc": 0.9687115241136182,
+  "naive_auc": 0.9693802369342579,
   "pit_recall_at_k_arr": 0.42646083505723187,
-  "naive_recall_at_k_arr": 0.9706947411533318
+  "naive_recall_at_k_arr": 0.9686033497913034
  },
  "ablation": {
   "product": {

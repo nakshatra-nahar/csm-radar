@@ -8,10 +8,10 @@ import pandas as pd
 import pytest
 
 from radar import evaluate
-from radar.asof import load_frames
+from radar.asof import Frames, load_frames
 from radar.bootstrap import HISTORY_END, replay_feed, seed_tenants_and_users
 from radar.db import Database
-from radar.registry import rules_score
+from radar.registry import FEATURE_NAMES, rules_score
 from radar.sim import generate
 from radar.tenants import runtime_config, tenant_id
 from tests.conftest import WORKER_PASSWORD, _role_dsn, fresh_database
@@ -65,25 +65,59 @@ def test_slot_floors_match_the_served_rule():
     assert evaluate.slot_floor(t, "rules", cfg).tolist() == [True, False, False, True]
 
 
-def test_current_state_reads_salesforce_as_it_stands_at_history_end():
-    """The naive leakage row: every snapshot sees the account's latest Salesforce row (Type,
-    ARR__c, Renewal_Date__c), so a churned account is a Former Customer in every week."""
+def test_naive_frames_show_todays_salesforce_row_at_every_snapshot():
+    """The naive leakage row: each crm.account's history-end version is visible from the first
+    event on, so the registry features (compute_features) read it at every T; other events
+    keep their own times."""
+    old = pd.Timestamp("2025-01-01", tz="UTC")
+    at = [old, pd.Timestamp("2026-06-01", tz="UTC"), pd.Timestamp("2025-03-01", tz="UTC")]
+    events = pd.DataFrame({
+        "type": ["crm.account", "crm.account", "billing.invoice"],
+        "entity_id": ["sf_account:A", "sf_account:A", "in_1"], "occurred_at": at,
+        "available_at": at, "version_key": ["1", "2", "1"],
+        "status": ["Customer", "Former Customer", "paid"]})
+    got = evaluate.naive_frames(Frames(events, None, None, None, None)).events
+    crm = got[got["type"] == "crm.account"]
+    assert crm["status"].tolist() == ["Former Customer"]
+    assert crm["occurred_at"].tolist() == crm["available_at"].tolist() == [old]
+    assert got.loc[got["type"] == "billing.invoice", "occurred_at"].tolist() == [at[2]]
+
+
+def test_current_state_takes_registry_features_from_the_naive_build():
+    """No second feature definition: every registry feature comes from the naive
+    compute_features rows; only former_customer is new (Type at history end)."""
     T = pd.Timestamp("2026-01-05", tz="UTC")
     at = [T - pd.Timedelta(days=400), pd.Timestamp("2026-06-01", tz="UTC")]
     events = pd.DataFrame({
         "type": "crm.account", "entity_id": "sf_account:A", "occurred_at": at,
-        "available_at": at, "status": ["Customer", "Former Customer"],
-        "arr_minor": [1_000_000, 500_000],
-        "renewal_date": pd.to_datetime(["2026-02-01", "2026-03-01"], utc=True)})
+        "available_at": at, "status": ["Customer", "Former Customer"]})
     frames = SimpleNamespace(events=events,
                              accounts=pd.DataFrame({"id": ["a1"], "sf_account_id": ["A"]}))
-    rows = pd.DataFrame({"log_arr": [9.2], "term_end_within_60d": [0.0]},
-                        index=pd.MultiIndex.from_tuples([("a1", T)],
-                                                        names=["account_id", "as_of"]))
-    got = evaluate.current_state(rows, frames)
-    assert got["former_customer"].tolist() == [1.0]
-    assert got["log_arr"].tolist() == [pytest.approx(np.log(5000))]
-    assert got["term_end_within_60d"].tolist() == [1.0]  # current renewal date: 55 days on
+    index = pd.MultiIndex.from_tuples([("a1", T)], names=["account_id", "as_of"])
+    rows = pd.DataFrame({name: 0.0 for name in FEATURE_NAMES} | {"label": [1]}, index=index)
+    naive = pd.DataFrame({name: 1.0 for name in FEATURE_NAMES}, index=index)
+    got = evaluate.current_state(rows, naive, frames)
+    assert (got[FEATURE_NAMES] == 1.0).all(axis=None)
+    assert got["former_customer"].tolist() == [1.0] and got["label"].tolist() == [1]
+
+
+def test_vp_ranks_apply_the_slot_floor(monkeypatch):
+    """Ruling AP in the VP narrative: a week where the VP account's lift (p over the book's
+    mean p) is under min_slot_lift gets no model rank, however large its ARR."""
+    T1, T2 = pd.Timestamp("2026-01-05", tz="UTC"), pd.Timestamp("2026-01-12", tz="UTC")
+    feats = pd.DataFrame({
+        "account_id": ["v", "a", "b"] * 2, "as_of": [T1] * 3 + [T2] * 3,
+        "p": [0.1, 0.3, 0.2, 0.5, 0.3, 0.1], "arr_minor": [1000, 10, 10] * 2,
+        "owner_user_id": "u", "eligible": True, "decision_visible": False,
+        "term_end": pd.Timestamp("2026-06-01", tz="UTC")}).set_index(["account_id", "as_of"])
+    monkeypatch.setattr(evaluate.model, "predict", lambda art, X: (X["p"].to_numpy(), None))
+    accounts = pd.DataFrame({"vp_case": [True], "sf_account_id": ["V"], "name": ["Vee"],
+                             "cause": ["x"], "decision_at": [T2 + pd.Timedelta(weeks=1)]})
+    cases = evaluate._vp_cases(feats, {T1: None}, accounts, pd.Series({"v": "V"}), 2,
+                               runtime_config("hearthline"))
+    weeks = cases[0]["weeks"]
+    assert [w["model"] for w in weeks] == ["below floor", 1]  # T1 lift 0.5; T2 lift 1.67
+    assert "below floor" in "\n".join(evaluate._vp_lines(cases[0], 2))
 
 
 def test_headline_metrics_are_weekly_means():

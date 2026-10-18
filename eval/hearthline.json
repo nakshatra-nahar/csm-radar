@@ -231,7 +231,7 @@
  "hindsight_vs_pit": {
   "pit_auc": 0.7682519326945513,
   "hindsight_auc": 0.7690315965418677,
-  "naive_auc": 0.9858629841100397,
+  "naive_auc": 0.9837839845618537,
   "pit_recall_at_k_arr": 0.6373797871635509,
   "naive_recall_at_k_arr": 0.9859238396909221
  },
@@ -520,25 +520,25 @@
     {
      "as_of": "2026-04-06 00:00:00+00:00",
      "renewal_sort": 34,
-     "model": 15,
+     "model": 11,
      "book_size": 36
     },
     {
      "as_of": "2026-04-13 00:00:00+00:00",
      "renewal_sort": 32,
-     "model": 16,
+     "model": 10,
      "book_size": 38
     },
     {
      "as_of": "2026-04-20 00:00:00+00:00",
      "renewal_sort": 31,
-     "model": 18,
+     "model": 9,
      "book_size": 39
     },
     {
      "as_of": "2026-04-27 00:00:00+00:00",
      "renewal_sort": 30,
-     "model": 10,
+     "model": 6,
      "book_size": 40
     },
     {
@@ -643,37 +643,37 @@
     {
      "as_of": "2026-04-20 00:00:00+00:00",
      "renewal_sort": 32,
-     "model": 21,
+     "model": "below floor",
      "book_size": 32
     },
     {
      "as_of": "2026-04-27 00:00:00+00:00",
      "renewal_sort": 31,
-     "model": 24,
+     "model": "below floor",
      "book_size": 36
     },
     {
      "as_of": "2026-05-04 00:00:00+00:00",
      "renewal_sort": 30,
-     "model": 29,
+     "model": "below floor",
      "book_size": 37
     },
     {
      "as_of": "2026-05-11 00:00:00+00:00",
      "renewal_sort": 28,
-     "model": 28,
+     "model": "below floor",
      "book_size": 38
     },
     {
      "as_of": "2026-05-18 00:00:00+00:00",
      "renewal_sort": 26,
-     "model": 21,
+     "model": 13,
      "book_size": 36
     },
     {
      "as_of": "2026-05-25 00:00:00+00:00",
      "renewal_sort": 25,
-     "model": 9,
+     "model": 8,
      "book_size": 35
     },
     {
@@ -727,19 +727,19 @@
     {
      "as_of": "2026-07-27 00:00:00+00:00",
      "renewal_sort": 12,
-     "model": 8,
+     "model": 7,
      "book_size": 40
     },
     {
      "as_of": "2026-08-03 00:00:00+00:00",
      "renewal_sort": 8,
-     "model": 9,
+     "model": 8,
      "book_size": 39
     },
     {
      "as_of": "2026-08-10 00:00:00+00:00",
      "renewal_sort": 7,
-     "model": 6,
+     "model": 4,
      "book_size": 38
     }
    ]

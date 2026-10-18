@@ -85,7 +85,7 @@ All unforecastable causes pooled: model 10%, random 20% (21 decisions).
 | naive current-state: today's Salesforce row | 97% | 0.969 |
 
 Hindsight features use every record as if it had arrived when it happened: +0.001 AUC, so late arrivals barely change this world's weekly snapshots.
-The naive current-state model reads Type, ARR__c and Renewal_Date__c as they stand at history end into every snapshot, so a churned account is already a Former Customer; its +0.297 AUC is the optimism the as-of rule prevents.
+The naive current-state model sees each Salesforce account row (Type, ARR__c, Renewal_Date__c) as it stands at history end in every snapshot. The registry computes the same features from it, plus former_customer, so a churned account is already a Former Customer; its +0.298 AUC is the optimism the as-of rule prevents.
 
 ## Ablation: which sources matter
 
