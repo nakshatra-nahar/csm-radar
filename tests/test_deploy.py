@@ -8,9 +8,10 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from radar.db import Database
-from radar.tenants import tenant_id
+from radar.tenants import TENANTS, runtime_config, tenant_id
 from tests.conftest import WEB_PASSWORD, WORKER_PASSWORD, _role_dsn
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -104,3 +105,11 @@ def test_vercel_function_duration_and_daily_cron_backstop():
     minute, hour, *rest = cron["schedule"].split()
     assert cron["path"] == "/internal/tick" and minute.isdigit() and hour.isdigit()
     assert rest == ["*", "*", "*"]  # Hobby: at most once a day
+    # the backstop must reach every tenant's daily sweep gate, in winter and summer time:
+    # Hobby fires once anywhere in the hour, so check its first and last minute
+    for slug in TENANTS:
+        tz, gate = ZoneInfo(TENANTS[slug].timezone), runtime_config(slug)["sweep_hour_local"]
+        for day in ("2027-01-11", "2027-07-12"):
+            for m in (0, 59):
+                at = datetime.fromisoformat(f"{day}T{int(hour):02d}:{m:02d}+00:00")
+                assert at.astimezone(tz).hour >= gate, (slug, at)

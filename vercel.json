@@ -6,5 +6,5 @@
       "excludeFiles": "{data/**,eval/**,tests/**,scripts/**,docs/[!m]*,docs/research/**,docs/deck/**,docs/img/**}"
     }
   },
-  "crons": [{ "path": "/internal/tick", "schedule": "0 13 * * *" }]
+  "crons": [{ "path": "/internal/tick", "schedule": "0 14 * * *" }]
 }

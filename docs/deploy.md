@@ -224,7 +224,9 @@ schedule in `.github/workflows/tick.yml` to `*/30 * * * *`.
 days without repository activity, and a scheduled run can start several minutes late. Re-enable
 the workflow under **Actions → tick**. The daily Vercel cron in `vercel.json` keeps the
 worker running in the meantime (on Hobby it fires once a day, at some point in the scheduled
-hour).
+hour). That hour must be at or after every tenant's `sweep_hour_local` in local time, or the
+cron never runs that tenant's daily sweep: `0 14 * * *` is 06:00 to 06:59 in Los Angeles in
+winter (`tests/test_deploy.py` checks it).
 
 **Rotating TICK_SECRET.** Generate a new value, replace it in all three places, then redeploy:
 
