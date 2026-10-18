@@ -83,7 +83,7 @@ Each account has a latent health `h_t`, simulated week by week from its start. W
 ### 3.3 The VP's two lost renewals
 
 Two hearthline accounts are planted. Their term ends fall in Aug–Sep 2026.
-- Shocks are injected forward, 16–20 weeks before their term end: a CRM integration break that isn't repaired, the champion leaving, and a bug episode.
+- Shocks are injected forward, 16–18 weeks before their term end: a CRM integration break that isn't repaired, the champion leaving, and a bug episode.
 - The CSM's outbound email to them is suppressed for 60 days.
 
 Their churn decision is forced to "churn" to match the VP's story. This is stated in the README; the signals are still generated forward from the shocks.
@@ -449,7 +449,7 @@ FastAPI + Jinja2, server-rendered, one small CSS file, no build step.
 7. run one actionable sweep and freeze this week's worklists;
 8. generate briefs.
 
-Docker: one image. `ROLE=web|worker|bootstrap` selects the command. `docker-compose.yml` runs postgres:16 plus bootstrap, web and worker. Hosting: Railway Hobby (~$8/month) with three services (Postgres template pinned to 16, web, worker). Railway config-as-code is deprecated, so there is no railway.toml.
+Docker: one image. `ROLE=web|worker|bootstrap` selects the command. `docker-compose.yml` runs postgres:16 plus bootstrap, web and worker. Hosting: Vercel (Hobby) for the web app and the cron-driven tick, with Neon (Free, Postgres 16) as the database; see docs/deploy.md.
 
 ## 11. Testing (claims → proof)
 

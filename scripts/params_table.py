@@ -3,7 +3,10 @@
     uv run python scripts/params_table.py
 
 tests/test_docs.py checks that README.md holds this output verbatim, so the table cannot
-drift from the knobs the simulator actually reads."""
+drift from the knobs the simulator actually reads. A number in a meaning is written as
+{path} and printed from PARAMS, so no value is typed twice."""
+
+import re
 
 from radar.sim.params import PARAMS
 
@@ -41,19 +44,21 @@ ROWS = [
     ("telemetry_share", "share of accounts with a product workspace"),
     ("personal_email_share", "contacts on a personal email domain"),
     ("merge_share", "accounts that get a duplicate Salesforce record, merged later"),
-    ("tickets.silent_share", "accounts that file fewer tickets of every kind (x 0.3)"),
+    ("tickets.silent_share",
+     "accounts that file fewer tickets of every kind (x {tickets.silent_factor})"),
     ("email.suppress_days", "days the CSM's outbound mail stops for the VP's two cases"),
     ("feed.stripe.metadata", "Stripe customers carrying a Salesforce id"),
-    ("feed.stripe.messy_id", "of those, ids that are 15-char, lowercase or padded"),
-    ("feed.stripe.tail", "Stripe events delivered late (backoff tail, mean 12 h)"),
+    ("feed.stripe.messy_id", "of those, ids in the short form, lowercase or padded"),
+    ("feed.stripe.tail",
+     "Stripe events delivered late (backoff tail, mean {feed.stripe.tail_mean_hours} h)"),
     ("feed.stripe.redeliver", "Stripe events delivered twice with the same id"),
     ("feed.stripe.twin", "Stripe semantic twins (new id, same state)"),
     ("feed.zendesk.org_external_id", "Zendesk organisations carrying a Salesforce id"),
     ("feed.salesforce.reexport", "Salesforce rows exported again unchanged"),
     ("feed.gmail.date_skew", "Gmail Date headers with a wrong offset"),
     ("feed.product.sf_account_id", "usage rows carrying a Salesforce id"),
-    ("feed.product.late_batch", "monthly usage batches 1 to 9 days late"),
-    ("feed.product.restate", "usage rows restated as version + 1"),
+    ("feed.product.late_batch", "monthly usage batches delivered days late"),
+    ("feed.product.restate", "usage rows restated with a higher version"),
     ("feed.product.future", "product events with a future timestamp (device clock)"),
 ]
 
@@ -73,9 +78,14 @@ def _show(value) -> str:
     return str(value)
 
 
+def _fill(meaning: str) -> str:
+    """The meaning with each {path} replaced by that knob's value."""
+    return re.sub(r"\{([\w.]+)\}", lambda m: _show(_get(m.group(1))), meaning)
+
+
 def table() -> str:
     lines = ["| knob | value | meaning |", "|---|---|---|"]
-    lines += [f"| `{path}` | {_show(_get(path))} | {meaning} |" for path, meaning in ROWS]
+    lines += [f"| `{path}` | {_show(_get(path))} | {_fill(meaning)} |" for path, meaning in ROWS]
     return "\n".join(lines)
 
 

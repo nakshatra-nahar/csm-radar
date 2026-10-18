@@ -35,6 +35,10 @@ list frozen by the 06:00 sweep:
 2. up to two check-ins for renewals Radar knows little about;
 3. the rest of the ten slots, ranked by expected ARR at risk (p x ARR).
 
+The list does not re-sort during the week. A must-act case that opens after Monday (a
+cancellation announced on Tuesday) is added at the end of its owner's list with a "new since
+Monday" chip, shown after Monday's must-acts; past ten it counts as overflow on the team page.
+
 Each row says why now, the play, whether a draft is ready, and takes a one-click outcome. The
 account page shows what changed since the last run, the evidence, the trace back to the
 stored inputs, and a draft email. Nothing reaches a customer without a person approving it,
@@ -170,15 +174,15 @@ One line each; the full log, with alternatives and the cost of being wrong, is
 | Label: a churn decision within 90 days, not the subscription end ([design 5.2](docs/design.md#52-other-canonical-metrics)) | the decision comes weeks before the end; predicting the end is predicting the past |
 | One registry of definitions with a code hash per feature ([design 5](docs/design.md#5-canonical-definitions-the-data-dictionary)) | the scorer refuses a model built on other feature code instead of scoring wrong |
 | One logistic regression per tenant, stored as JSON ([design 6](docs/design.md#6-model)) | a few hundred decisions per tenant; contributions are exact, so the "why" is the computation |
-| Rank by expected ARR at risk (p x ARR), capacity as a cap (Ruling AZ) | the list is the best use of ten touches; a healthy book gets a shorter list |
+| Rank by expected ARR at risk (p x ARR), capacity as a cap ([Ruling AZ](docs/decisions.md#a-frozen-weekly-list-per-csm-ranked-by-expected-arr-at-risk-rulings-ap-az-ba)) | the list is the best use of ten touches; a healthy book gets a shorter list |
 | Hard facts are rules with an SLA, not model output ([design 5.2](docs/design.md#52-other-canonical-metrics)) | a cancellation notice needs an owner today whatever the model says |
 | R/Y/G is display only, with a fixed meaning | a colour that drives nothing cannot cause an email storm |
 | A circuit breaker on new cases per tenant per day | an outage or a late batch opens one incident instead of hundreds of cases |
 | The job queue is a Postgres table, polled ([design 8](docs/design.md#8-the-agent-unattended)) | jobs are enqueued in the same transaction as the data that triggers them; no second system |
 | The LLM writes words only, from a read-only evidence pack, checked by a validator | it never scores, ranks, picks a recipient or a play; a failed check falls back to a template |
 | Row-level security forced on every tenant table; app roles cannot bypass it ([design 4.3](docs/design.md#43-tenant-isolation)) | isolation is enforced by the database, not by every query remembering a WHERE clause |
-| The runtime never reads `DATABASE_URL` or `PG*` (Ruling AU) | Neon's integration puts owner credentials there; the app refuses owner DSNs |
-| Remote bootstrap is a local bootstrap plus `radar push` (Ruling AT) | replaying record by record over a ~250 ms round trip would take days |
+| The runtime never reads `DATABASE_URL` or `PG*` ([Ruling AU](docs/decisions.md#app-roles-that-rls-binds-and-a-startup-check-ruling-au)) | Neon's integration puts owner credentials there; the app refuses owner DSNs |
+| Remote bootstrap is a local bootstrap plus `radar push` ([Ruling AT](docs/decisions.md#remote-bootstrap-is-a-local-bootstrap-plus-radar-push-ruling-at)) | replaying record by record over a ~250 ms round trip would take days |
 
 ## Claims and their proof
 
@@ -283,14 +287,11 @@ Next, in order:
 1. Load events into columns instead of a list of dicts, and scope `evaluate_rules` to the one
    account it checks. This is the memory fix that 10x needs first (below).
 2. Pass the tick's deadline down to each job, so a long job never starts late in a tick.
-3. Append must-act cases opened mid-week to the frozen list with a "new since Monday" mark.
-   Today they open with an owner and an SLA and show on the account and team pages, but
-   `/week` shows only Monday's list.
-4. Run the six-week pilot from the brief: three CSMs and a manager, measured on cases handled
+3. Run the six-week pilot from the brief: three CSMs and a manager, measured on cases handled
    on time and on surprise churn (lost ARR that never appeared on its owner's list).
-5. Retrain with exposure: once CSMs act on the list, saved accounts become negatives. Hold
+4. Retrain with exposure: once CSMs act on the list, saved accounts become negatives. Hold
    out the accounts just below the capacity line as a comparison group.
-6. Partition `raw_records` and `events` by month and move old months to cold storage.
+5. Partition `raw_records` and `events` by month and move old months to cold storage.
 
 ## What breaks first at 10x
 
@@ -306,11 +307,11 @@ build machine's disk. Every number is from
 | 3 | A job that starts late in a tick | the tick budget is 240 s inside a 300 s function, so a late job gets at most 60 s | pass the deadline into `tick()` and skip a job whose recent p95 exceeds the time left |
 | 4 | Rule checks | 262 checks a week at 0.95 s each at 1x; about 6.9 of the 44.8 worker hours a week at 10x | the same as row 2 |
 | 5 | The daily sweep does not break | 3.0 s for hearthline at 1x; about 30 s projected at 10x | needs the memory fix in row 2 |
-| 6 | Page queries slow down linearly | the account timeline sorts the tenant's 16,240 identity links (10.9 ms warm) | start the timeline from the account's refs, as the brief query does since Ruling BB; index `worklist_items` and `cases` by account |
+| 6 | Page queries slow down linearly | the account timeline sorts the tenant's 16,240 identity links (10.9 ms warm) | start the timeline from the account's refs, as the brief query does; index `worklist_items` and `cases` by account |
 | 7 | Bootstrap replay | 953 records/s for hearthline; at least 1,450 s at 10x | bulk-load raw records with COPY |
 
 Brief generation no longer grows with the world: the evidence query went from 3.7 s per
-hearthline brief to about 1 ms (Ruling BB; migration 008). LLM spend in a correlated shock is
+hearthline brief to about 1 ms (migration 008). LLM spend in a correlated shock is
 capped by config, not measured (the key had no credit): each tenant has a daily budget of
 200,000 tokens, which bounds spend at $0.40 a day for three tenants on Haiku 5.5.
 
@@ -373,7 +374,7 @@ injected 16 to 18 weeks before their term end, and the CSM's outbound email stop
 days. Their churn decision is forced to match the story; their signals are still generated
 forward from the shocks. Maple Street Realty carries a prompt-injection ticket.
 
-The generator's knobs, printed from [radar/sim/params.py](radar/sim/params.py) by
+The main knobs of the generator, printed from [radar/sim/params.py](radar/sim/params.py) by
 `uv run python scripts/params_table.py` (a test checks this table matches):
 
 | knob | value | meaning |
@@ -414,7 +415,7 @@ The generator's knobs, printed from [radar/sim/params.py](radar/sim/params.py) b
 | `tickets.silent_share` | 0.4 | accounts that file fewer tickets of every kind (x 0.3) |
 | `email.suppress_days` | 60 | days the CSM's outbound mail stops for the VP's two cases |
 | `feed.stripe.metadata` | 0.85 | Stripe customers carrying a Salesforce id |
-| `feed.stripe.messy_id` | 0.2 | of those, ids that are 15-char, lowercase or padded |
+| `feed.stripe.messy_id` | 0.2 | of those, ids in the short form, lowercase or padded |
 | `feed.stripe.tail` | 0.015 | Stripe events delivered late (backoff tail, mean 12 h) |
 | `feed.stripe.redeliver` | 0.01 | Stripe events delivered twice with the same id |
 | `feed.stripe.twin` | 0.003 | Stripe semantic twins (new id, same state) |
@@ -422,8 +423,8 @@ The generator's knobs, printed from [radar/sim/params.py](radar/sim/params.py) b
 | `feed.salesforce.reexport` | 0.02 | Salesforce rows exported again unchanged |
 | `feed.gmail.date_skew` | 0.05 | Gmail Date headers with a wrong offset |
 | `feed.product.sf_account_id` | 0.9 | usage rows carrying a Salesforce id |
-| `feed.product.late_batch` | 0.1 | monthly usage batches 1 to 9 days late |
-| `feed.product.restate` | 0.03 | usage rows restated as version + 1 |
+| `feed.product.late_batch` | 0.1 | monthly usage batches delivered days late |
+| `feed.product.restate` | 0.03 | usage rows restated with a higher version |
 | `feed.product.future` | 0.001 | product events with a future timestamp (device clock) |
 
 How "messy and out of order" is planted ([design 3.5](docs/design.md#35-source-payloads-generator-output--ingestion-input)):
@@ -463,10 +464,6 @@ no organisation; Radar does not guess a match for either.
   AUC 0.55), and some seat-cut risk shows up as a usage drop.
 - **Ranking by ARR at risk flags fewer small churners early.** They are covered by must-act
   rules and the Book page, not by model slots.
-- **Mid-week must-acts are not appended to `/week`.** They open as cases with an owner, an
-  SLA and an escalation, and show on the account and team pages.
-- **The account timeline labels every non-exact match "matched by name/domain".** Radar has
-  no name matching; those records were matched by a unique corporate domain.
 - **Calibration is imperfect.** Hearthline's model card shows ECE 0.024 for
   yearly-billed rows across the backtest, above the 0.02 line at which training adds a Platt
   step (training checks only the latest 8 matured weeks).

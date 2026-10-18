@@ -19,12 +19,16 @@ def _text(doc: str) -> str:
     return (ROOT / doc).read_text()
 
 
-def _params_table() -> str:
+def _params_module():
     spec = importlib.util.spec_from_file_location("params_table",
                                                   ROOT / "scripts" / "params_table.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.table()
+    return mod
+
+
+def _params_table() -> str:
+    return _params_module().table()
 
 
 @pytest.mark.parametrize("doc", DOCS)
@@ -60,3 +64,19 @@ def test_cited_functions_sit_on_their_lines(doc):
 
 def test_readme_generator_table_is_printed_from_params():
     assert _params_table() in _text("README.md")
+
+
+def test_generator_meanings_type_no_numbers():
+    """A number in a meaning comes from PARAMS ({path}), so it cannot go stale."""
+    typed = [m for _, m in _params_module().ROWS if re.search(r"\d", re.sub(r"\{[^}]*\}", "", m))]
+    assert typed == []
+
+
+def _slug(heading: str) -> str:  # GitHub's heading anchor
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def test_readme_links_to_decision_entries_resolve():
+    anchors = {_slug(h) for h in re.findall(r"^#+ (.*)$", _text("docs/decisions.md"), re.M)}
+    cited = re.findall(r"\]\(docs/decisions\.md#([^)]+)\)", _text("README.md"))
+    assert cited and [a for a in cited if a not in anchors] == []

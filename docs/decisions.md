@@ -255,7 +255,9 @@ build was run are left out.
   then model slots ranked by p x ARR (rules_score x ARR without a model). A model slot needs
   a key of at least `min_slot_lift` (1.0) x the tenant's mean key over eligible accounts.
   Capacity is a cap, not a quota: a healthy book gets a shorter list, and every list is a
-  prefix of its book's ranking. The backtest applies the same floor.
+  prefix of its book's ranking. The backtest applies the same floor. A must-act that opens
+  after the freeze (Ruling BH) is appended at the end of its owner's list for the week,
+  marked new since Monday and counted as overflow past K; nothing re-sorts.
 - **Alternatives.** Rank by p alone (Ruling AP's floor on p); fill every slot regardless of
   risk; re-rank daily.
 - **Why.** p x ARR is the expected loss a touch can address. A floor on the key itself can
@@ -266,7 +268,8 @@ build was run are left out.
   rules and the Book page.
 - **Code.** `radar/policy.py` (`freeze_worklists`, `slot_key`, `slot_floor`);
   `tests/test_evaluate.py::test_floored_top_k_is_a_prefix_of_the_ranking`;
-  `tests/test_policy.py::test_a_low_risk_book_gets_fewer_model_slots`.
+  `tests/test_policy.py::test_a_low_risk_book_gets_fewer_model_slots`;
+  `tests/test_policy.py::test_mid_week_must_act_appends_new_since_monday`.
 
 ### Hard facts are rules with an SLA, not model output
 

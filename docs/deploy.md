@@ -201,8 +201,8 @@ failing.
 
 ### A10. Operations
 
-**Neon storage.** The Free plan holds 1 GB. The bootstrap measured about 560 MB, and score
-history grows about 6.5 MB a day. Check the size with
+**Neon storage.** The Free plan holds 1 GB. The bootstrap measured about 584 MB, and the database
+grows about 5.4 MB a day (4.6 MB of it score history; docs/measurements.md). Check the size with
 `psql "$NEON_DIRECT_OWNER_URL" -c "SELECT pg_size_pretty(pg_database_size('neondb'))"`.
 When it passes about 800 MB, prune old score runs:
 

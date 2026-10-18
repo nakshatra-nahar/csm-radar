@@ -125,7 +125,7 @@
       <span class="src">{{ e.source }}</span>
       <span class="text">{{ e.text }}</span>
       {% if e.exact %}<span class="match exact">exact key: {{ e.method|replace('_', ' ') }}</span>
-      {% else %}<span class="match fuzzy">matched by name/domain</span>{% endif %}
+      {% else %}<span class="match fuzzy">matched by domain</span>{% endif %}
       {% if e.late %}<span class="tag">arrived after the run</span>{% endif %}
     </li>
     {% else %}

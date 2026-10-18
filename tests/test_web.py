@@ -273,7 +273,7 @@ def test_timeline_greys_late_records_and_badges_heuristic_matches(web):
         clock.freeze(MONDAY)
     late = page.split('<li class="late">', 1)[1].split("</li>", 1)[0]
     assert "Invoice open" in late and "arrived after the run" in late
-    assert "matched by name/domain" in late
+    assert "matched by domain" in late
 
 
 def test_ticket_html_is_escaped(web):
