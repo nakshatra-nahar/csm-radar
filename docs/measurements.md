@@ -287,6 +287,14 @@ Jobs (all done; **0 dead** in the whole jobs table):
 
 ## 10x
 
+Design section 14 asks for these numbers measured on a loaded 10x world. Only part of them
+are. Measured: the generated 10x world's counts, and feature build, scoring and RAM on 10x
+frames tiled from hearthline's 1x frames (not the generated 10x world). Projected from 1x:
+the 10x database size, `load_frames` time and RAM, bootstrap replay time and Postgres plan
+quality. No 10x world was loaded into Postgres. This laptop had 3.0 GiB of disk free, and a
+loaded 10x world needs about 5.7 GB of database plus about 1.8 GB of feed files (10 × the
+180 MB `data/` at 1x). Hearthline alone needs about 3.2 GB of database.
+
 ### World size
 
 Command: `generate(out_dir, seed=7, scale=10, tenants=[slug], count_only=True)` from
@@ -394,12 +402,21 @@ From the measurements above, in the order they break as the world grows.
    `evaluate_rules` to the one account it checks (its `shortcut:` comment already says so).
    Even then it is close: in the tiled run, the 10x frames, features and scores added 1,389 MiB
    over the 1x load.
-3. **Brief generation throughput breaks at 10x.** The brief evidence query takes 3.75 s per
-   hearthline brief at 1x and grows as size^1.5 to size^1.7, so 120 to 190 s per brief at 10x.
-   It reaches the 300 s job lease at 13x to 19x. Projected from the soak's 135 brief jobs a week
+3. **Brief generation breaks at about 5x to 6x hearthline.** Jobs run inside `/internal/tick`,
+   a Vercel function with `maxDuration` 300 s (vercel.json). `worker.run_for` checks its 240 s
+   tick budget only between ticks, and a tick runs up to 20 jobs, so a job that starts just
+   under 240 s has only 300 − 240 = 60 s before Vercel kills the function. The killed job keeps
+   its lease, is reaped and retried, and goes dead if it keeps landing late in a tick. The brief
+   evidence query takes 3.75 s per hearthline brief at 1x and grows as size^1.5 to size^1.7, so
+   it passes 60 s at 16^(1/1.7) to 16^(1/1.5), or 5.1x to 6.3x. At 10x a brief takes 120 to
+   190 s, so a tick finishes at most one or two before the next one is killed. Above 13x to 19x
+   a brief passes 300 s and can never finish. Projected from the soak's 135 brief jobs a week
    (mean 1.62 s): 1,350 jobs at 51 to 81 s each, 19 to 30 hours of worker time a week. The 15-minute
    ticks give 44.8 hours a week (672 ticks × 240 s). A Monday's briefs would land over a day or
-   more instead of within the hour. Fix: an index on `identity_links (tenant_id, account_ref,
+   more instead of within the hour. Fix: in `run_for`, check the time left before each job, not
+   each tick, and do not start a job whose expected time (its kind's recent p95) exceeds
+   `maxDuration` minus the time spent, or lower `TICK_BUDGET_S` so the gap covers the slowest
+   job. Then speed the query: an index on `identity_links (tenant_id, account_ref,
    available_at DESC, id DESC)`, and start from the account's refs instead of every event of
    the tenant, as the timeline does.
 4. **Rule checks cost about 7 hours a week at 10x.** At 1x: 262 checks a week, 0.95 s each,
@@ -409,7 +426,7 @@ From the measurements above, in the order they break as the world grows.
 5. **The daily sweep does not break.** It takes 3.0 s for hearthline at 1x. Projected to 10x: two
    whole-tenant loads (2 × 10.6 s), features and scoring (2.9 s, measured), rules (0.6 s,
    measured) and the rest (0.51 s at 1x) scaled linearly to about 5 s. That is about 30 s, well
-   under the 300 s lease. It does need the memory fix in item 2.
+   under the 60 s a late job gets (item 3). It does need the memory fix in item 2.
 6. **Page queries slow down linearly but stay fast.** The timeline sorts all of the tenant's
    identity links on every account page: 16,240 at 1x (10.9 ms warm), 162,400 at 10x. The /week
    list seq-scans `worklist_items` once per item; for hearthline at 1x that table grows by
@@ -424,4 +441,19 @@ From the measurements above, in the order they break as the world grows.
 Not measured: LLM spend during a correlated shock. The API key had no credit, so every brief
 was a template. The soak ran 135 brief jobs in a week at 1x. With a key, each calls the LLM (one
 attempt, at most one retry) unless the tenant's `llm.daily_token_budget` (200,000 tokens) is
-spent, after which briefs fall back to the template. So spend in a shock is capped per tenant per day by config.
+spent, after which briefs fall back to the template. So spend in a shock is capped per tenant
+per day by config, and a shock cannot raise it.
+
+Upper bound in dollars. The budget counts every token (input, cache and output), and output is
+the dearest rate, so the bound prices every token as output. The check runs once per brief,
+before its two calls, so the last brief can pass the cap by two calls. A call is at most about
+16,000 tokens: the largest stored pack (3,359 bytes over 280 briefs in `radar_full`), the
+system prompt, schema, tool and retry instruction (about 5.6 KB), counted as one token per
+byte, plus 4,096 output tokens (`max_tokens`). At most two workers run at once (the 15-minute
+GitHub Actions tick and Vercel's daily cron), so a tenant's day is at most 200,000 + 2 × 2 ×
+16,000 = 264,000 tokens:
+
+| model | per tenant per day | 3 tenants per day | 3 tenants per 30 days |
+|---|---|---|---|
+| claude-haiku-5-5 (default, $0.50 per M output) | $0.13 | $0.40 | $11.88 |
+| claude-sonnet-5-5 ($10 per M output) | $2.64 | $7.92 | $237.60 |
