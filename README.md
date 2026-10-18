@@ -38,6 +38,8 @@ list frozen by the 06:00 sweep:
 The list does not re-sort during the week. A must-act case that opens after Monday (a
 cancellation announced on Tuesday) is added at the end of its owner's list with a "new since
 Monday" chip, shown after Monday's must-acts; past ten it counts as overflow on the team page.
+If that account is already on the list as a model slot or check-in, its row becomes the
+must-act in place, with the chip, and keeps its position.
 
 Each row says why now, the play, whether a draft is ready, and takes a one-click outcome. The
 account page shows what changed since the last run, the evidence, the trace back to the

@@ -293,7 +293,7 @@ Missing-data semantics:
   3. Model slots `max(0, K - |1| - |2|)`, ranked by expected ARR at risk (`p * arr`; without a model, `rules_score * arr`) among eligible, unsuppressed accounts whose key is at least `min_slot_lift` x the tenant's mean key over eligible accounts at the run (tenant config, 1.0: expected ARR at risk relative to the tenant mean). Capacity is a cap, not a quota: a healthy book gets a shorter list. The floor is monotone in the ranking key, so every list is a prefix of its book's ranking: it can shorten a list, never reorder it or substitute a smaller account (Ruling AZ). The backtest applies the same floor, with the mean over its labelled test rows.
 
   K is in tenant config (default 10).
-  - Mid-week, new must-act cases are appended with a "new since Monday" mark and the list is never re-sorted.
+  - Mid-week, new must-act cases are appended with a "new since Monday" mark and the list is never re-sorted; an account already listed as a model slot or check-in has its row upgraded to the must-act in place.
   - A model-slot case closes automatically (`auto_closed`) when the account falls outside the top 2K for two consecutive Mondays with no outcome logged.
   - Kitewire has no model, so its model slots use the rules heuristic (section 7).
 - `play` v1: chosen by rule. Must-act kinds map to their play. Model slots use the family of the top behavioural contribution:

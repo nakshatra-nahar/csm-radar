@@ -276,6 +276,24 @@ def test_second_mid_week_case_or_listed_must_act_appends_nothing(owner_conn, wor
     assert len(new) == 2 and items(owner_conn, tid, csm, NOW.date()) == before
 
 
+def test_mid_week_must_act_upgrades_its_model_slot_in_place(owner_conn, worker_db, book):
+    """An account already on the list as a model slot that gets a must-act mid-week keeps
+    its position, but its row becomes the must-act, new since Monday: the urgency shows."""
+    tid, csm, make_accounts = book
+    first, second = make_accounts(2)
+    run = make_run(owner_conn, tid, csm, NOW, [{"account": first, "rank": 1, "p": 0.6},
+                                               {"account": second, "rank": 2, "p": 0.1}])
+    freeze(worker_db, tid, run, NOW)
+    before = items(owner_conn, tid, csm, NOW.date())
+    assert [(i["account_id"], i["kind"]) for i in before] == [(first, "model")]
+    (case,) = open_cases(worker_db, tid, [hit(first, "cancel_announced")], TUESDAY)
+    after = items(owner_conn, tid, csm, NOW.date())
+    assert len(after) == 1 and {k: after[0][k] for k in ("account_id", "position", "kind", "reason", "case_id",
+                                     "new_since_monday", "p")} == {
+        "account_id": first, "position": 1, "kind": "must_act", "reason": "cancel_announced",
+        "case_id": case, "new_since_monday": True, "p": 0.6}
+
+
 def test_must_act_before_mondays_freeze_waits_for_the_freeze(owner_conn, worker_db, book):
     """No list frozen for the current week: nothing is appended (not even to last week's
     list); Monday's freeze lists the case as an ordinary must-act."""

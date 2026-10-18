@@ -138,8 +138,9 @@ def _append_new_since_monday(conn, account_id, kind: str, case: UUID, now: datet
                              cfg: dict) -> None:
     """Ruling BH: a must-act opened after the owner's list froze this (tenant-local ISO) week
     joins it at the end, marked new since Monday, overflow past K like the freeze. Nothing
-    is re-sorted or removed; an account already on the list (any kind) keeps its row, and
-    with no list yet Monday's freeze picks the case up."""
+    is re-sorted or removed: an account already listed as a model slot or check-in has that
+    row upgraded in place (same position) to the must-act; one already listed as a must-act
+    keeps its row. With no list yet, Monday's freeze picks the case up."""
     today = now.astimezone(ZoneInfo(cfg["timezone"])).date()
     conn.execute(
         "INSERT INTO worklist_items (worklist_id, account_id, position, kind, reason, p,"
@@ -152,7 +153,9 @@ def _append_new_since_monday(conn, account_id, kind: str, case: UUID, now: datet
         " FROM accounts a JOIN worklists w ON w.user_id = a.owner_user_id"
         "  AND w.week_start = %(week)s"
         " LEFT JOIN account_scores s ON s.run_id = w.run_id AND s.account_id = a.id"
-        " WHERE a.id = %(a)s ON CONFLICT (tenant_id, worklist_id, account_id) DO NOTHING",
+        " WHERE a.id = %(a)s ON CONFLICT (tenant_id, worklist_id, account_id) DO UPDATE"
+        " SET kind = 'must_act', reason = excluded.reason, case_id = excluded.case_id,"
+        "  new_since_monday = true WHERE worklist_items.kind <> 'must_act'",
         {"k": cfg["capacity_per_csm"], "kind": kind, "case": case, "now": now,
          "week": today - timedelta(days=today.weekday()), "a": account_id})
 
