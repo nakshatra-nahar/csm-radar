@@ -146,6 +146,13 @@ averaged over test weeks. The 95% intervals are a paired cluster bootstrap over 
 `acceptance()` passes for both tenants. Oracle AUC is 0.848 (hearthline) and 0.843
 (tallyworks). The best single feature is seat_utilization: AUC 0.717 and 0.695.
 
+Lead time under the earlier floor on p (Ruling AP, superseded by the key floor of Ruling AZ):
+tallyworks flagged **90 of 174** churn decisions ahead (median 10.8 weeks), against 70 of 174
+under the key floor. Source: `eval/tallyworks.json` `lead_time` at commit f517b6c, read with
+`git show f517b6c:eval/tallyworks.json`. The key floor lists large accounts over small high-p
+ones, so it flags fewer, larger decisions; recall@K, which is ARR-weighted, went up (42.6% to
+59.1%).
+
 ## Quarantine and identity
 
 `radar_full` after the bootstrap. A record goes to quarantine when no identity link maps it to

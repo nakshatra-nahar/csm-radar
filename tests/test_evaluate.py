@@ -300,3 +300,15 @@ def test_eval_json_writes_null_for_nan():
                             "c": float("inf")})
     assert json.loads(out) == {"a": None, "b": [None, 3], "c": None}
     assert "NaN" not in out and "Infinity" not in out
+
+
+def test_renewal_sort_claim_follows_the_intervals():
+    """'worse than random' only where renewal sort's CI lies below random's (Ruling BG)."""
+    def ci(lo, hi):
+        return {"diff": (lo + hi) / 2, "lo": lo, "hi": hi}
+    worse = evaluate._renewal_vs_random({"renewal_sort": ci(0.10, 0.19), "random": ci(0.25, 0.27)})
+    level = evaluate._renewal_vs_random({"renewal_sort": ci(0.15, 0.22), "random": ci(0.19, 0.20)})
+    assert worse.startswith("- Renewal sort does worse than random because")
+    assert level.startswith("- Renewal sort does no better than random because")
+    assert evaluate._renewal_vs_random({"renewal_sort": ci(0.30, 0.40),
+                                        "random": ci(0.19, 0.20)}) is None

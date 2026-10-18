@@ -263,6 +263,18 @@ def run(frames: Frames, tenant: dict, truth: dict | None = None, k: int = 10,
     return result
 
 
+def _renewal_vs_random(recall_ci: dict) -> str | None:
+    """'worse than random' only where renewal sort's interval lies wholly below random's, 'no
+    better' where they overlap, nothing where renewal sort is clearly better (Ruling BG)."""
+    rs, rnd = recall_ci["renewal_sort"], recall_ci["random"]
+    if rs["lo"] > rnd["hi"]:
+        return None
+    verdict = "worse than" if rs["hi"] < rnd["lo"] else "no better than"
+    return (f"- Renewal sort does {verdict} random because accounts near renewal have mostly"
+            " already announced their decision and left the worklist, so the ones left are"
+            " mostly renewers.")
+
+
 def _decisions(rows: pd.DataFrame) -> int:
     return int(rows.index.get_level_values("account_id")[rows["label"] == 1].nunique())
 
@@ -515,10 +527,7 @@ def render_model_card(tenant_slug: str, result: dict) -> str:
             f"- Sorting by renewal date held {_pct(p['renewal_sort']['recall_at_k_arr'])}, the"
             f" rules heuristic {_pct(p['rules']['recall_at_k_arr'])} and random picks"
             f" {_pct(p['random']['recall_at_k_arr'])}.",
-            *(["- Renewal sort does worse than random because accounts near renewal have"
-               " mostly already announced their decision and left the worklist, so the ones"
-               " left are mostly renewers."]
-              if p["renewal_sort"]["recall_at_k_arr"] < p["random"]["recall_at_k_arr"] else []),
+            *filter(None, [_renewal_vs_random(ci["recall"])]),
             f"- Model minus renewal sort: {_ci_text(ci['model_minus_renewal_sort'], True)}."
             f" Model minus rules: {_ci_text(ci['model_minus_rules'], True)}.",
             *(["- For this tenant the deployed model holds less churned ARR than the rules"
