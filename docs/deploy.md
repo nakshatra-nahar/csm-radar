@@ -243,6 +243,12 @@ vercel deploy --prod
 **LLM drafts.** With no Anthropic key, or no credit on it, every brief uses the template
 fallback. Add credit (and `ANTHROPIC_API_KEY`, then redeploy) to get LLM-drafted briefs.
 
+**Deploying changed feature code.** Each model stores a hash of the feature code it was
+trained on (`registry.manifest()`, which covers `radar/features.py` and `radar/asof.py`).
+After a deploy that changes that code, scoring fails closed with an incident until each
+tenant has a model trained on the new code: run `RADAR_WORKER_DSN=<the Neon worker DSN> uv run
+radar train --tenant <slug>` for each tenant with a model, or repeat A4 and A5.
+
 ## B. Docker Compose (or any always-on host)
 
 Compose runs PostgreSQL 16, a one-shot `bootstrap`, the `web` app and a long-lived `worker`,
