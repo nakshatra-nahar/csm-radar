@@ -36,6 +36,8 @@ class Database:
             kwargs=kwargs,
             min_size=min_size,
             max_size=max_size,
+            # a connection the server closed (Neon suspends when idle) is replaced, not used
+            check=ConnectionPool.check_connection,
             open=True,
         )
 

@@ -224,3 +224,19 @@ def test_reap_two_expired_twins_requeues_the_newer(db):
             "SELECT id FROM jobs WHERE dedupe_key = 'twin:both'"))
         assert jobs.reap(conn, now=soon + timedelta(seconds=61)) == 2
     assert status(db, older)["status"] == "dead" and status(db, newer)["status"] == "queued"
+
+
+def test_pool_replaces_a_connection_the_server_closed(queue_dsn):
+    """Neon drops idle connections; a warm Vercel instance's pool must hand out a live one
+    instead of failing the next tick's first transaction."""
+    pool = Database(_role_dsn(queue_dsn, "radar_worker", WORKER_PASSWORD), min_size=1,
+                    max_size=1)
+    try:
+        with pool.system_tx() as conn:
+            pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+        with psycopg.connect(queue_dsn, autocommit=True) as owner:
+            owner.execute("SELECT pg_terminate_backend(%s)", (pid,))
+        with pool.system_tx() as conn:
+            assert conn.execute("SELECT 1 AS one").fetchone()["one"] == 1
+    finally:
+        pool.close()
