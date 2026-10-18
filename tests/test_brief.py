@@ -143,7 +143,7 @@ def test_valid_llm_output_becomes_the_draft(owner_conn, worker_db, brief_world, 
     w, client = brief_world, FakeClient([result(valid_output)])
     brief_id = brief.generate_brief(worker_db, w["tid"], w["case"], client)
     row = brief_row(owner_conn, brief_id)
-    assert (row["status"], row["generator"], row["prompt_version"]) == ("ready", "llm", "brief-v1")
+    assert (row["status"], row["generator"], row["prompt_version"]) == ("ready", "llm", "brief-v2")
     assert row["validation"]["attempts"][0]["rules"]["numbers_cited"] is True
     draft = rows(owner_conn, "SELECT * FROM outbox WHERE brief_id = %s", brief_id)
     assert [(d["kind"], d["status"], d["body"]) for d in draft] == [
@@ -579,3 +579,11 @@ def test_evidence_dates_are_the_tenant_local_day():
     assert text == "CRM account updated on 2026-10-16"
     day = templates.env.get_template("macros.html").module.day
     assert str(day(evening, la)) == "2026-10-16" and str(day(evening)) == "2026-10-17"
+
+
+def test_system_prompt_states_the_validators_limits_and_banned_words():
+    """The prompt and validate.check must not drift: a stale limit burns the retry."""
+    p = brief.SYSTEM_PROMPT
+    assert all(f"{v} characters" in p for k, v in validate.CAPS.items() if k != "summary_points")
+    assert f"one to {validate.CAPS['summary_points']} points" in p
+    assert ", ".join(validate.BANNED_WORDS) in p

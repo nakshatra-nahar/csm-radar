@@ -34,8 +34,9 @@ class Brief(BaseModel):
 
 SCHEMA = anthropic.transform_schema(Brief)
 CAPS = {"summary_points": 5, "point_text": 300, "subject": 120, "body": 1200}
-BANNED = re.compile(r"\b(churn|risk|health score|at-risk|discount|refund|free month|model"
-                    r"|flagged|score)", re.I)
+BANNED_WORDS = ("churn", "risk", "health score", "at-risk", "discount", "refund", "free month",
+                "model", "flagged", "score")
+BANNED = re.compile(r"\b(" + "|".join(map(re.escape, BANNED_WORDS)) + ")", re.I)
 UNSAFE = {"URL": URL_RE, "email address": EMAIL_RE, "phone number": PHONE_RE,
           "HTML tag": re.compile(r"<[^>]*>"), "[E#] marker": re.compile(r"\[E\d+\]", re.I)}
 # One number pattern for both sides: model text and the display strings it cites.
