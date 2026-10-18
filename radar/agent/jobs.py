@@ -1,0 +1,121 @@
+"""The Postgres job queue: coalesced enqueue, SKIP LOCKED claims, leases with fencing, backoff.
+
+Every call runs on the caller's connection (system_tx for the worker). The database's now()
+ignores radar.clock, so each timestamp is passed in from `now`.
+"""
+
+import random
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from uuid import UUID
+
+import psycopg
+from psycopg.rows import class_row, scalar_row
+from psycopg.types.json import Jsonb
+
+from radar import clock
+
+BACKOFF_BASE_S, BACKOFF_CAP_S = 5, 3600
+
+
+@dataclass(frozen=True)
+class Job:
+    id: int
+    tenant_id: UUID | None
+    kind: str
+    payload: dict
+    attempts: int  # this claim's attempt number: the fencing token for complete() and fail()
+    lease_expires_at: datetime
+
+
+def enqueue(conn: psycopg.Connection, kind: str, tenant_id: UUID | None, payload: dict,
+            dedupe_key: str | None = None, lane: int = 0,
+            run_at: datetime | None = None) -> int | None:
+    """Insert a job; None when an identical queued job (same tenant and key) already exists."""
+    # The ON CONFLICT target repeats jobs_dedupe_idx's predicate exactly, or Postgres
+    # cannot infer the partial index.
+    with conn.cursor(row_factory=scalar_row) as cur:
+        return cur.execute(
+            "INSERT INTO jobs (tenant_id, kind, payload, dedupe_key, lane, run_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (tenant_id, dedupe_key)"
+            " WHERE status = 'queued' AND dedupe_key IS NOT NULL DO NOTHING RETURNING id",
+            (tenant_id, kind, Jsonb(payload), dedupe_key, lane, run_at or clock.now()),
+        ).fetchone()
+
+
+def claim(conn: psycopg.Connection, worker_id: str, n: int = 10, lease_s: int = 300,
+          now: datetime | None = None) -> list[Job]:
+    """Lease up to n due jobs, live lane first. Concurrent claimers skip each other's rows.
+
+    worker_id is not stored: the jobs table has no owner column; the attempts fence
+    is what tells two claimers apart.
+    """
+    now = now or clock.now()
+    with conn.cursor(row_factory=class_row(Job)) as cur:
+        return cur.execute(
+            "WITH due AS ("
+            "  SELECT id FROM jobs WHERE status = 'queued' AND run_at <= %(now)s"
+            "  ORDER BY lane, run_at, id LIMIT %(n)s FOR NO KEY UPDATE SKIP LOCKED"
+            "), claimed AS ("
+            "  UPDATE jobs SET status = 'running', attempts = jobs.attempts + 1,"
+            "    lease_expires_at = %(lease)s"
+            "  FROM due WHERE jobs.id = due.id"
+            "  RETURNING jobs.id, jobs.tenant_id, jobs.kind, jobs.payload, jobs.attempts,"
+            "    jobs.lease_expires_at, jobs.lane, jobs.run_at"
+            ") SELECT id, tenant_id, kind, payload, attempts, lease_expires_at FROM claimed"
+            " ORDER BY lane, run_at, id",
+            {"now": now, "n": n, "lease": now + timedelta(seconds=lease_s)},
+        ).fetchall()
+
+
+def complete(conn: psycopg.Connection, job: Job, now: datetime | None = None) -> bool:
+    """Mark done; False if the lease was lost (reaped, maybe re-claimed by another worker)."""
+    cur = conn.execute(
+        "UPDATE jobs SET status = 'done', finished_at = %s, lease_expires_at = NULL"
+        " WHERE id = %s AND attempts = %s AND status = 'running'",
+        (now or clock.now(), job.id, job.attempts),
+    )
+    return cur.rowcount == 1
+
+
+def fail(conn: psycopg.Connection, job: Job, error: str, max_attempts: int = 5,
+         now: datetime | None = None) -> None:
+    """Requeue after a full-jitter backoff, or mark dead at max_attempts. Fenced like complete()."""
+    now = now or clock.now()
+    if job.attempts >= max_attempts:
+        status, run_at, finished_at = "dead", None, now
+    else:
+        wait = random.uniform(0, min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2**job.attempts))
+        status, run_at, finished_at = "queued", now + timedelta(seconds=wait), None
+    conn.execute(
+        "UPDATE jobs SET status = %s, run_at = COALESCE(%s, run_at), finished_at = %s,"
+        " lease_expires_at = NULL, last_error = %s"
+        " WHERE id = %s AND attempts = %s AND status = 'running'",
+        (status, run_at, finished_at, error, job.id, job.attempts),
+    )
+
+
+def reap(conn: psycopg.Connection, now: datetime | None = None) -> int:
+    """Return expired leases to the queue; a job out of attempts goes dead instead.
+
+    Without the dead branch a job that kills its worker every time would be retried forever.
+    """
+    now = now or clock.now()
+    return conn.execute(
+        "UPDATE jobs SET lease_expires_at = NULL,"
+        " status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,"
+        " finished_at = CASE WHEN attempts >= max_attempts THEN %(now)s END,"
+        " last_error = CASE WHEN attempts >= max_attempts THEN 'lease expired' ELSE last_error END"
+        " WHERE status = 'running' AND lease_expires_at < %(now)s",
+        {"now": now},
+    ).rowcount
+
+
+def once_per_period(conn: psycopg.Connection, tenant_id: UUID | None, kind: str,
+                    period_key: str) -> bool:
+    """True for the one call that records (tenant, kind, period); False for every later one."""
+    return conn.execute(
+        "INSERT INTO schedule_runs (tenant_id, kind, period_key) VALUES (%s, %s, %s)"
+        " ON CONFLICT DO NOTHING",
+        (tenant_id, kind, period_key),
+    ).rowcount == 1
