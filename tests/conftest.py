@@ -181,9 +181,11 @@ def small_world_db(small_world_dir):
 
 
 @pytest.fixture(scope="session")
-def trained_world_db(small_world_db):
-    """small_world_db plus a model trained and promoted per tenant (train_world)."""
-    return train_world(small_world_db)
+def trained_world_db(small_world_dir):
+    """The small world in a database of its own plus a model trained and promoted per tenant
+    (train_world): training and the tests on it write, so small_world_db stays as replayed."""
+    with world_database(small_world_dir) as world:
+        yield train_world(world)
 
 
 # --- briefs and outbox (Task 10) ------------------------------------------------------------
