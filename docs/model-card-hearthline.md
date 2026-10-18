@@ -152,12 +152,12 @@ Each source record is linked to a Salesforce account by exact keys only. Precisi
 | method (source) | links | precision | recall |
 |---|---|---|---|
 | contact_email (gmail) | 2,930 | 1.000 | 0.870 |
-| domain (stripe) | 335 | 1.000 | 0.129 |
+| domain (stripe) | 241 | 1.000 | 0.093 |
 | domain (zendesk) | 585 | 1.000 | 0.302 |
 | merge (salesforce) | 16 | 1.000 | 0.006 |
 | product_metadata (product) | 1,717 | 1.000 | 0.858 |
 | sf_id (salesforce) | 2,539 | 1.000 | 0.969 |
-| stripe_metadata (stripe) | 2,175 | 1.000 | 0.837 |
+| stripe_metadata (stripe) | 2,269 | 1.000 | 0.873 |
 | zendesk_external_id (zendesk) | 1,325 | 1.000 | 0.684 |
 
 ## Acceptance gates

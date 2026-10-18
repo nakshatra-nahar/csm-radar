@@ -818,9 +818,9 @@
    "recall": 0.8702108702108702
   },
   "domain (stripe)": {
-   "links": 335,
+   "links": 241,
    "precision": 1.0,
-   "recall": 0.12884615384615383
+   "recall": 0.0926923076923077
   },
   "domain (zendesk)": {
    "links": 585,
@@ -843,9 +843,9 @@
    "recall": 0.9694539900725467
   },
   "stripe_metadata (stripe)": {
-   "links": 2175,
+   "links": 2269,
    "precision": 1.0,
-   "recall": 0.8365384615384616
+   "recall": 0.8726923076923077
   },
   "zendesk_external_id (zendesk)": {
    "links": 1325,

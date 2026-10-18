@@ -40,6 +40,9 @@ database. The final rebuild (no Anthropic key set) took **374 s**. It applied 7 
 ran 298 jobs. It ingested 140,130 hearthline records, 83,268 tallyworks records and 7,450
 kitewire records, and buffered 31,067 / 18,458 / 5,983 for later delivery.
 
+2026-10-18, final rebuild of `radar_full` on the final code (no Anthropic key set): **193.8 s**,
+9 migrations, 289 jobs. The brief step is faster since the evidence-query fix.
+
 Per-step times are from the previous rebuild, timed step by step. That rebuild had an Anthropic
 key with no credit, so all 280 LLM calls failed (HTTP 400). Each failure took 440 ms on average
 (603 ms at most), which added about 123 s to the brief step. Its total was 612.1 s.
@@ -192,22 +195,26 @@ Per tenant: hearthline 15,454 rows, tallyworks 8,632, kitewire 1,558.
   not seen yet. 612 resolved by `product_metadata`, a median of 12.9 days later.
 - Every resolved row has its `resolved_link_id` set.
 
-Identity links by method (27,405 in all):
+Identity links by method, from the final rebuild (27,600 in all; the quarantine figures above
+are from the previous rebuild, and the final one resolved 6 more Stripe rows: 15,001 resolved):
 
 | source | method | links |
 |---|---|---|
-| salesforce | sf_id | 4,900 |
-| salesforce | sf_opportunity | 6,054 |
+| salesforce | sf_id | 4,902 |
+| salesforce | sf_opportunity | 6,055 |
 | salesforce | merge | 33 |
 | gmail | contact_email | 5,041 |
-| stripe | stripe_metadata | 4,148 |
+| stripe | stripe_metadata | 4,340 |
 | stripe | domain | 658 |
 | product | product_metadata | 3,216 |
 | zendesk | zendesk_external_id | 2,323 |
 | zendesk | domain | 1,032 |
 
 The model cards score these links against the generator's identity truth. Precision is 1.000
-for every method, except tallyworks `sf_id` at 0.999.
+for every method, except tallyworks `sf_id` at 0.999. A Stripe ref first linked by domain gets an
+appended `stripe_metadata` link once its customer record names the account (commit 40481cd).
+The domain row stays, so this table counts both, while the model cards count each ref's
+current link: hearthline 241 domain and 2,269 stripe_metadata, tallyworks 184 and 1,744.
 
 ## Daily sweep duration
 

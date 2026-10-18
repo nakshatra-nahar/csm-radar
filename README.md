@@ -98,8 +98,8 @@ uv run radar web         # http://127.0.0.1:8000, log in with RADAR_DEMO_PASSCOD
 uv run radar worker      # the unattended agent, in a second shell
 ```
 
-`radar bootstrap` is idempotent; on an empty database it took 374 s on an Apple M4
-([docs/measurements.md](docs/measurements.md)). The variables it reads are in
+`radar bootstrap` is idempotent; on an empty database the final rebuild took 193.8 s on an
+Apple M4 ([docs/measurements.md](docs/measurements.md#bootstrap)). The variables it reads are in
 [.env.example](.env.example): `RADAR_OWNER_DSN` (migrations and bootstrap only), the two
 app-role passwords, `RADAR_SECRET_KEY`, `RADAR_DEMO_PASSCODE`, and an optional
 `ANTHROPIC_API_KEY` (without one, every brief uses the deterministic template).
